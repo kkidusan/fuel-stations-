@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'station_settings_page.dart'; // ← Add this import
+
 class StationHomePage extends StatefulWidget {
   final VoidCallback? onNavigateToPreorders;
 
@@ -170,8 +172,7 @@ class _StationHomePageState extends State<StationHomePage> {
                     title: 'Pending Orders',
                     subtitle: 'Tap to view',
                     color: Colors.blue,
-                    // You can also connect this to the same callback:
-                    // onTap: widget.onNavigateToPreorders,
+                    onTap: widget.onNavigateToPreorders, // already supported
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
@@ -179,6 +180,7 @@ class _StationHomePageState extends State<StationHomePage> {
                     title: 'Update Prices',
                     subtitle: 'Last: 2h ago',
                     color: Colors.green,
+                    // onTap: () => ... (add later when you create price update page)
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
@@ -186,6 +188,7 @@ class _StationHomePageState extends State<StationHomePage> {
                     title: 'Reports',
                     subtitle: 'Sales & trends',
                     color: Colors.indigo,
+                    // onTap: () => ... (add later)
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
@@ -193,6 +196,13 @@ class _StationHomePageState extends State<StationHomePage> {
                     title: 'Settings',
                     subtitle: 'Station config',
                     color: Colors.grey.shade700,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const StationSettingsPage(),
+                        ),
+                      );
+                    },
                   ),
                 ]),
               ),
@@ -214,7 +224,7 @@ class _StationHomePageState extends State<StationHomePage> {
 }
 
 // ────────────────────────────────────────────────
-// Stat card
+// Stat card (unchanged)
 // ────────────────────────────────────────────────
 class _MiniStatCard extends StatelessWidget {
   final IconData icon;
@@ -267,7 +277,7 @@ class _MiniStatCard extends StatelessWidget {
 }
 
 // ────────────────────────────────────────────────
-// Compact action tile
+// Compact action tile (unchanged)
 // ────────────────────────────────────────────────
 class _CompactActionTile extends StatelessWidget {
   final IconData icon;

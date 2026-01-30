@@ -73,8 +73,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
         builder: (context) => const DriverNotificationsPage(),
       ),
     ).then((_) {
-      // Optional: refresh unread count when returning
-      // For simple demo: reset when opened
+      // Optional: refresh count logic here in real app
+      // For now we simulate "viewed → clear badge"
       if (_unreadNotifications > 0) {
         setState(() => _unreadNotifications = 0);
       }
@@ -91,36 +91,40 @@ class _DriverDashboardState extends State<DriverDashboard> {
         centerTitle: true,
         elevation: 0,
         actions: [
-          Badge.count(
-            count: _unreadNotifications,
-            isLabelVisible: _unreadNotifications > 0,
-            backgroundColor: Colors.redAccent,
-            textColor: Colors.white,
-            smallSize: 16,              // compact for 1-digit
-            largeSize: 18,              // room for 2 digits
-            padding: EdgeInsets.zero,
-            offset: const Offset(6, -6), // strong overlap – modern glued look
-            textStyle: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              height: 1.0,
-            ),
-            child: IconButton(
+          Padding(
+            padding: const EdgeInsets.only(right: 4.0), // tighter right padding
+            child: Badge.count(
+              count: _unreadNotifications,
+              isLabelVisible: _unreadNotifications > 0,
+              smallSize: 12,
+              largeSize: 16,
+              alignment: Alignment.topRight,
+              // ── Key values for tight/modern overlap ──
+              offset: const Offset(-8, 4),     // pulls badge left & slightly down
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              icon: Icon(
-                _unreadNotifications > 0
-                    ? Icons.notifications
-                    : Icons.notifications_outlined,
-                size: 27,
+              backgroundColor: Colors.redAccent.shade700,
+              textColor: Colors.white,
+              textStyle: const TextStyle(
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
+                height: 1.0,
               ),
-              tooltip: _unreadNotifications > 0
-                  ? '$_unreadNotifications unread'
-                  : 'Notifications',
-              onPressed: _openNotifications,
+              child: IconButton(
+                icon: Icon(
+                  _unreadNotifications > 0
+                      ? Icons.notifications
+                      : Icons.notifications_outlined,
+                  size: 26,
+                ),
+                tooltip: _unreadNotifications > 0
+                    ? '$_unreadNotifications unread'
+                    : 'Notifications',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: _openNotifications,
+              ),
             ),
           ),
-          const SizedBox(width: 12),
         ],
       ),
       drawer: _buildDrawer(),
@@ -192,15 +196,17 @@ class _DriverDashboardState extends State<DriverDashboard> {
             leading: Badge.count(
               count: _unreadNotifications,
               isLabelVisible: _unreadNotifications > 0,
-              backgroundColor: Colors.redAccent,
-              textColor: Colors.white,
-              smallSize: 16,
-              largeSize: 18,
+              smallSize: 12,
+              largeSize: 16,
+              alignment: Alignment.topRight,
+              // Adjusted for drawer list tile (icon is smaller/larger spacing)
+              offset: const Offset(-10, 3),   // ← tight overlap like app bar
               padding: EdgeInsets.zero,
-              offset: const Offset(10, -6), // adjusted for drawer icon
+              backgroundColor: Colors.redAccent.shade700,
+              textColor: Colors.white,
               textStyle: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
+                fontSize: 8,
+                fontWeight: FontWeight.bold,
                 height: 1.0,
               ),
               child: const Icon(Icons.notifications, size: 26),

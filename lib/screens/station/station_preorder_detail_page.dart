@@ -1,9 +1,7 @@
 // ================================================
 // station_preorder_detail_page.dart
 // ================================================
-
 import 'dart:convert';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -21,7 +19,6 @@ class StationPreorderDetailPage extends StatelessWidget {
 
   void _showQrCodeDialog(BuildContext context) {
     final now = DateTime.now().toUtc();
-
     final qrData = {
       'orderId': orderId,
       'stationId': orderData['stationId'] ?? 'unknown',
@@ -31,10 +28,9 @@ class StationPreorderDetailPage extends StatelessWidget {
       'fuelType': orderData['fuelType'] ?? '—',
       'liters': (orderData['liters'] as num?)?.toInt() ?? 0,
       'generatedAt': now.toIso8601String(),
-      'exp': now.add(const Duration(hours: 4)).toIso8601String(), // optional expiry
+      'exp': now.add(const Duration(hours: 4)).toIso8601String(),
       'version': '1.0',
     };
-
     final qrContent = jsonEncode(qrData);
 
     showDialog(
@@ -75,8 +71,7 @@ class StationPreorderDetailPage extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             const Text(
-              'Show this code to the driver.\n'
-              'The order status will update only after they scan it.',
+              'Show this code to the driver.\nThe order status will update only after they scan it.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 14),
             ),
@@ -112,13 +107,12 @@ class StationPreorderDetailPage extends StatelessWidget {
     final position = orderData['positionInQueue']?.toString() ?? '—';
     final status = (orderData['status'] as String?)?.toLowerCase() ?? 'waiting';
 
-    final bool canShowQr = ['waiting', 'pending', 'confirmed'].contains(status);
-
     final statusInfo = _getStatusDisplay(status);
+    final bool canShowQr = ['waiting', 'pending', 'confirmed'].contains(status);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Order #$orderId'),
+        title: const Text('Order Detail'),
         centerTitle: true,
         elevation: 0,
       ),
@@ -126,48 +120,20 @@ class StationPreorderDetailPage extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Card(
-              elevation: 0,
-              color: statusInfo.color.withOpacity(0.08),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    Icon(
-                      statusInfo.icon,
-                      size: 48,
-                      color: statusInfo.color,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      statusInfo.label,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: statusInfo.color,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Queue position: $position',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: statusInfo.color.withOpacity(0.8),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 32),
+            // Status & Queue Position moved here as normal detail rows
+            _DetailRow('Status', statusInfo.label),
+            _DetailRow('Queue Position', position),
+
+            const SizedBox(height: 16),
             _DetailRow('Fuel Type', fuelType),
             _DetailRow('Liters', '${liters.toStringAsFixed(0)} L'),
             _DetailRow('Driver', driverName),
             _DetailRow('Plate', driverPlate),
             _DetailRow('Email', driverEmail),
             _DetailRow('Ordered', createdStr),
+
             const SizedBox(height: 40),
+
             if (canShowQr)
               FilledButton.icon(
                 icon: const Icon(Icons.qr_code_rounded),
@@ -189,6 +155,7 @@ class StationPreorderDetailPage extends StatelessWidget {
                 ),
                 onPressed: null,
               ),
+
             const SizedBox(height: 40),
           ],
         ),
@@ -203,7 +170,7 @@ class StationPreorderDetailPage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 110,
+            width: 130, // slightly wider to fit "Queue Position"
             child: Text(
               label,
               style: TextStyle(fontSize: 14, color: Colors.grey[700]),

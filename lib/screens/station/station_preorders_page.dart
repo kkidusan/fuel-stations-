@@ -1,7 +1,3 @@
-// ================================================
-// station_preorders_page.dart
-// ================================================
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -18,95 +14,58 @@ class StationPreordersPage extends StatefulWidget {
 class _StationPreordersPageState extends State<StationPreordersPage> {
   String? _currentUserEmail;
   String? _stationAutoId;
-  bool _isLoadingUser = true;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadUserAndStationId();
+    _loadUserAndStation();
   }
 
-  Future<void> _loadUserAndStationId() async {
-    final authUser = FirebaseAuth.instance.currentUser;
-
-    if (authUser == null) {
-      setState(() {
-        _currentUserEmail = 'Not signed in';
-        _stationAutoId = null;
-        _isLoadingUser = false;
-      });
+  Future<void> _loadUserAndStation() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() => _currentUserEmail = null);
       return;
     }
 
-    setState(() {
-      _currentUserEmail = authUser.email ?? 'No email';
-      _isLoadingUser = true;
-    });
+    _currentUserEmail = user.email;
 
     try {
-      final query = await FirebaseFirestore.instance
+      final snap = await FirebaseFirestore.instance
           .collection('users')
-          .where('email', isEqualTo: authUser.email)
+          .where('email', isEqualTo: user.email)
           .limit(1)
           .get();
 
-      if (query.docs.isNotEmpty) {
-        final userData = query.docs.first.data();
-        final autoId = userData['autoID'] as String?;
-
+      if (snap.docs.isNotEmpty) {
+        final autoId = snap.docs.first['autoID'] as String?;
         setState(() {
-          _stationAutoId = autoId?.trim().isNotEmpty == true ? autoId : null;
-          _isLoadingUser = false;
-        });
-      } else {
-        setState(() {
-          _stationAutoId = null;
-          _isLoadingUser = false;
+          _stationAutoId = (autoId?.trim().isNotEmpty == true) ? autoId : null;
         });
       }
     } catch (e) {
-      debugPrint('Error loading station ID: $e');
-      setState(() {
-        _stationAutoId = null;
-        _isLoadingUser = false;
-      });
+      debugPrint('Error fetching station ID: $e');
     }
+
+    setState(() => _isLoading = false);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoadingUser) {
+    if (_isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    if (_currentUserEmail == 'Not signed in') {
-      return Scaffold(
-        body: Center(
-          child: Text(
-            'Please sign in to view pre-orders',
-            style: TextStyle(fontSize: 18, color: Colors.grey[700]),
-          ),
-        ),
-      );
+    if (_currentUserEmail == null) {
+      return _centeredMessage('Please sign in to view pre-orders');
     }
 
     if (_stationAutoId == null) {
-      return Scaffold(
-        body: Center(
-          child: Text(
-            'Station ID not found\nCannot load pre-orders',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, color: Colors.grey[700]),
-          ),
-        ),
-      );
+      return _centeredMessage('Station ID not found\nCannot show pre-orders');
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Pre-orders'),
-        centerTitle: true,
-      ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('preorders')
@@ -115,15 +74,9 @@ class _StationPreordersPageState extends State<StationPreordersPage> {
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  'Error loading orders:\n${snapshot.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 16),
-                ),
-              ),
+            return _centeredMessage(
+              'Error loading pre-orders\n${snapshot.error}',
+              color: Colors.redAccent,
             );
           }
 
@@ -136,13 +89,13 @@ class _StationPreordersPageState extends State<StationPreordersPage> {
           if (docs.isEmpty) {
             return Center(
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.hourglass_empty_rounded, size: 90, color: Colors.grey[400]),
-                  const SizedBox(height: 20),
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.hourglass_empty_rounded, size: 48, color: Colors.grey),
+                  SizedBox(height: 12),
                   Text(
                     'No pre-orders yet',
-                    style: TextStyle(fontSize: 22, color: Colors.grey[700], fontWeight: FontWeight.w500),
+                    style: TextStyle(fontSize: 17, color: Colors.grey),
                   ),
                 ],
               ),
@@ -150,18 +103,16 @@ class _StationPreordersPageState extends State<StationPreordersPage> {
           }
 
           return RefreshIndicator(
-            onRefresh: () async => await Future.delayed(const Duration(milliseconds: 1200)),
+            onRefresh: () async => await Future.delayed(const Duration(milliseconds: 800)),
             child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               itemCount: docs.length,
               itemBuilder: (context, index) {
                 final doc = docs[index];
                 final data = doc.data() as Map<String, dynamic>;
 
                 final orderId = doc.id;
-                final shortId = '#${orderId.substring(0, 8)}';
-
-                final driverName = data['driverName']?.toString() ?? '—';
+                final driver = (data['driverName'] as String?)?.trim() ?? '—';
                 final plate = (data['driverPlate'] as String?)?.toUpperCase() ?? '—';
                 final fuel = data['fuelType']?.toString() ?? '—';
                 final liters = (data['liters'] as num?)?.toInt() ?? 0;
@@ -170,11 +121,11 @@ class _StationPreordersPageState extends State<StationPreordersPage> {
                 final statusInfo = _getStatusInfo(status);
 
                 return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  elevation: 1,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  margin: const EdgeInsets.only(bottom: 6),
+                  elevation: 0.8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(10),
                     onTap: () {
                       Navigator.push(
                         context,
@@ -186,38 +137,67 @@ class _StationPreordersPageState extends State<StationPreordersPage> {
                         ),
                       );
                     },
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      leading: const Icon(Icons.local_shipping_rounded, size: 42, color: Colors.blueGrey),
-                      title: Text(
-                        '$shortId  •  $driverName',
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16.5),
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('$fuel  •  $liters L'),
-                            const SizedBox(height: 4),
-                            Text('Plate: $plate', style: TextStyle(fontSize: 13.5, color: Colors.grey[700])),
-                          ],
-                        ),
-                      ),
-                      trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: statusInfo.color.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          statusInfo.label.toUpperCase(),
-                          style: TextStyle(
-                            color: statusInfo.color,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 13,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.local_shipping_outlined,
+                            size: 26,
+                            color: Colors.blueGrey,
                           ),
-                        ),
+                          const SizedBox(width: 10),
+
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  driver,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 1),
+                                Text(
+                                  '$fuel  •  $liters L',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                                Text(
+                                  plate,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: Colors.grey[700],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: statusInfo.color.withOpacity(0.14),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              statusInfo.label,
+                              style: TextStyle(
+                                color: statusInfo.color,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -230,20 +210,35 @@ class _StationPreordersPageState extends State<StationPreordersPage> {
     );
   }
 
+  Widget _centeredMessage(String message, {Color color = Colors.grey}) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, color: color),
+          ),
+        ),
+      ),
+    );
+  }
+
   ({String label, Color color}) _getStatusInfo(String status) {
     switch (status) {
       case 'waiting':
       case 'pending':
-        return (label: 'Waiting', color: Colors.orange);
+        return (label: 'WAITING', color: Colors.orange);
       case 'confirmed':
-        return (label: 'Confirmed', color: Colors.teal);
+        return (label: 'CONFIRMED', color: Colors.teal);
       case 'completed':
-        return (label: 'Completed', color: Colors.green.shade700);
+        return (label: 'DONE', color: Colors.green.shade700);
       case 'cancelled':
       case 'rejected':
-        return (label: 'Cancelled', color: Colors.red.shade700);
+        return (label: 'CANCELLED', color: Colors.red.shade700);
       default:
-        return (label: 'Unknown', color: Colors.blueGrey);
+        return (label: 'UNKNOWN', color: Colors.blueGrey);
     }
   }
 }

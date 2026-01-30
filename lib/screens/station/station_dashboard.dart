@@ -6,6 +6,11 @@ import 'station_home_page.dart';
 import 'station_preorders_page.dart';
 import 'station_history_page.dart';
 import 'station_profile_page.dart';
+import 'station_inventory_page.dart';
+import 'station_customers_page.dart';
+import 'station_settings_page.dart';
+import 'station_help_support_page.dart';
+import 'station_notifications_page.dart';           // ← added this import
 
 import '../../services/auth_user_service.dart'; // adjust path as needed
 
@@ -17,12 +22,16 @@ class StationDashboard extends StatefulWidget {
 }
 
 class _StationDashboardState extends State<StationDashboard> {
-  int _selectedIndex = 0;
+  // Preserve selected tab across hot-reload
+  static int _selectedIndex = 0;
 
   String _stationName = 'Loading...';
   String _email = 'Loading...';
   bool _isLoading = true;
   bool _isLoggingOut = false;
+
+  // We'll keep this for display — later you can make it dynamic from Firestore stream
+  int _notificationCount = 7; // placeholder — in real app → listen to unread count
 
   static const List<Widget> _pages = <Widget>[
     StationHomePage(),
@@ -86,11 +95,7 @@ class _StationDashboardState extends State<StationDashboard> {
   }
 
   void _onItemTapped(int index) {
-    setState(() => _selectedIndex = index);
-  }
-
-  void _changeTab(int index) {
-    if (index >= 0 && index < 4) {
+    if (index >= 0 && index < _pages.length) {
       setState(() => _selectedIndex = index);
     }
   }
@@ -107,7 +112,7 @@ class _StationDashboardState extends State<StationDashboard> {
 
       Navigator.pushNamedAndRemoveUntil(
         context,
-        '/', // ← or '/login' — adjust to your actual login route
+        '/', // ← change to '/login' if that's your actual login route
         (route) => false,
       );
     } catch (e) {
@@ -127,6 +132,23 @@ class _StationDashboardState extends State<StationDashboard> {
     }
   }
 
+  void _pushNewScreen(Widget page) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => page),
+    );
+  }
+
+  void _onNotificationPressed() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const StationNotificationsPage(),
+      ),
+    );
+
+    // Optional: you can reset the badge here after viewing
+    // setState(() => _notificationCount = 0);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -135,7 +157,37 @@ class _StationDashboardState extends State<StationDashboard> {
       appBar: AppBar(
         title: Text(_getTitle(_selectedIndex)),
         centerTitle: true,
+        actions: [
+          // Notification badge
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Badge.count(
+              count: _notificationCount,
+              isLabelVisible: _notificationCount > 0,
+              smallSize: 12,
+              largeSize: 16,
+              alignment: Alignment.topRight,
+              offset: const Offset(-7, 4),
+              padding: EdgeInsets.zero,
+              backgroundColor: Colors.redAccent.shade700,
+              textColor: Colors.white,
+              textStyle: const TextStyle(
+                fontSize: 7,
+                fontWeight: FontWeight.bold,
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.notifications_none_rounded),
+                iconSize: 26,
+                tooltip: 'Notifications',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                onPressed: _onNotificationPressed,
+              ),
+            ),
+          ),
+        ],
       ),
+
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -166,7 +218,7 @@ class _StationDashboardState extends State<StationDashboard> {
               title: const Text('Inventory'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO
+                _pushNewScreen(const StationInventoryPage());
               },
             ),
             ListTile(
@@ -174,7 +226,7 @@ class _StationDashboardState extends State<StationDashboard> {
               title: const Text('Customers'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO
+                _pushNewScreen(const StationCustomersPage());
               },
             ),
             const Divider(),
@@ -183,7 +235,7 @@ class _StationDashboardState extends State<StationDashboard> {
               title: const Text('Settings'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO
+                _pushNewScreen(const StationSettingsPage());
               },
             ),
             ListTile(
@@ -191,7 +243,7 @@ class _StationDashboardState extends State<StationDashboard> {
               title: const Text('Help & Support'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO
+                _pushNewScreen(const StationHelpSupportPage());
               },
             ),
             const Divider(),
@@ -238,17 +290,14 @@ class _StationDashboardState extends State<StationDashboard> {
           ],
         ),
       ),
+
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : IndexedStack(
               index: _selectedIndex,
-              children: [
-                StationHomePage(onNavigateToPreorders: () => _changeTab(1)),
-                const StationPreordersPage(),
-                const StationHistoryPage(),
-                const StationProfilePage(),
-              ],
+              children: _pages,
             ),
+
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _onItemTapped,
@@ -283,9 +332,10 @@ class _StationDashboardState extends State<StationDashboard> {
       leading: Icon(icon),
       title: Text(title),
       selected: _selectedIndex == index,
+      selectedTileColor: Theme.of(context).colorScheme.primary.withOpacity(0.12),
       onTap: () {
         Navigator.pop(context);
-        setState(() => _selectedIndex = index);
+        _onItemTapped(index);
       },
     );
   }

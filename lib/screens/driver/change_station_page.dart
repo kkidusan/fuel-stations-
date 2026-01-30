@@ -1,6 +1,10 @@
-// change_station_page.dart
+// lib/screens/driver/change_station_page.dart
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
 class ChangeStationPage extends StatefulWidget {
   final String orderId;
@@ -22,112 +26,343 @@ class ChangeStationPage extends StatefulWidget {
 
 class _ChangeStationPageState extends State<ChangeStationPage> {
   late Future<List<Map<String, dynamic>>> _stationsFuture;
+
   String? _selectedStationId;
   String? _selectedStationName;
-  bool _isUpdating = false;
+  int? _selectedWaitingCount;
+  double? _selectedEstWaitMin;
+
+  bool _isSubmitting = false;
+  bool _locationDenied = false;
+
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _stationsFuture = _fetchAvailableStations();
     _selectedStationId = widget.currentStationId;
     _selectedStationName = widget.currentStationName;
+
+    _stationsFuture = _fetchAndSortStations();
+    _searchCtrl.addListener(() {
+      setState(() => _searchQuery = _searchCtrl.text.trim().toLowerCase());
+    });
   }
 
-  // Reuse/improve your station fetch logic (same as DriverHomePage)
-  Future<List<Map<String, dynamic>>> _fetchAvailableStations() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('role', isEqualTo: 'station')
-          .where('isActive', isEqualTo: true) // only active stations
-          .limit(30)
-          .get();
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        return {
-          'id': doc.id,
-          'autoID': data['autoID'] as String?,
-          'name': data['name'] as String? ?? 'Unnamed',
-          'address': data['address'] as String? ?? '',
-          'priceDiesel': data['priceDiesel'] as num?,
-          'priceBenzene': data['priceBenzene'] as num?,
-          'isRecommended': (data['name'] as String?)?.toLowerCase().contains('total') == true ||
-              (data['name'] as String?)?.toLowerCase().contains('noc') == true,
-        };
-      }).toList();
-    } catch (e) {
-      debugPrint('Error loading stations: $e');
-      return [];
+  Future<List<Map<String, dynamic>>> _fetchAndSortStations() async {
+    final userPos = await _getCurrentPositionSafely();
+
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .where('role', isEqualTo: 'station')
+        .get();
+
+    final List<Map<String, dynamic>> list = [];
+
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      final name = (data['name'] as String? ?? 'Unnamed').trim();
+      final address = data['address'] as String? ?? 'No address';
+      final lat = data['latitude'] as num?;
+      final lng = data['longitude'] as num?;
+      final diesel = data['priceDiesel'] as num?;
+      final benzene = data['priceBenzene'] as num?;
+
+      double? distKm;
+      if (userPos != null && lat != null && lng != null) {
+        distKm = _calculateDistance(
+          userPos.latitude,
+          userPos.longitude,
+          lat.toDouble(),
+          lng.toDouble(),
+        );
+      }
+
+      list.add({
+        'id': doc.id,
+        'name': name,
+        'address': address,
+        'distanceKm': distKm,
+        'priceDiesel': diesel?.toDouble(),
+        'priceBenzene': benzene?.toDouble(),
+        'lat': lat?.toDouble(),
+        'lng': lng?.toDouble(),
+        'isPartner': _isPartnerStation(name),
+      });
+    }
+
+    // Sort: distance → name
+    if (userPos != null) {
+      list.sort((a, b) {
+        final da = a['distanceKm'] as double?;
+        final db = b['distanceKm'] as double?;
+        if (da != null && db != null) return da.compareTo(db);
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return a['name'].compareTo(b['name']);
+      });
+    } else {
+      list.sort((a, b) => a['name'].compareTo(b['name']));
+    }
+
+    return list;
+  }
+
+  Future<Position?> _getCurrentPositionSafely() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return null;
+
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+        if (perm == LocationPermission.denied) return null;
+      }
+      if (perm == LocationPermission.deniedForever) return null;
+
+      LocationSettings settings;
+
+      if (Theme.of(context).platform == TargetPlatform.android) {
+        settings = AndroidSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 0,
+          forceLocationManager: false,
+          intervalDuration: const Duration(seconds: 6),
+        );
+      } else {
+        settings = const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          distanceFilter: 0,
+        );
+      }
+
+      return await Geolocator.getCurrentPosition(
+        locationSettings: settings,
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _locationDenied = true);
+      }
+      return null;
     }
   }
 
-  Future<void> _confirmChange(String newStationId, String newStationName) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Change Station?'),
-        content: Text(
-          'Move this order from\n"${widget.currentStationName}"\nto\n"$newStationName"?\n\nQueue position will be recalculated.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Confirm'),
-          ),
-        ],
-      ),
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371; // km
+    final dLat = _deg2rad(lat2 - lat1);
+    final dLon = _deg2rad(lon2 - lon1);
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_deg2rad(lat1)) * math.cos(_deg2rad(lat2)) *
+            math.sin(dLon / 2) * math.sin(dLon / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return r * c;
+  }
+
+  double _deg2rad(double deg) => deg * math.pi / 180;
+
+  bool _isPartnerStation(String name) {
+    final n = name.toLowerCase();
+    return n.contains('total') || n.contains('noc') || n.contains('mis') || n.contains('partner');
+  }
+
+  Future<Map<String, dynamic>?> _getStationQueueInfo(String stationId) async {
+    final todayStart = DateTime.now().copyWith(
+      hour: 0, minute: 0, second: 0, millisecond: 0, microsecond: 0,
     );
 
-    if (confirm != true) return;
+    final query = await FirebaseFirestore.instance
+        .collection('preorders')
+        .where('stationId', isEqualTo: stationId)
+        .where('status', whereIn: ['waiting', 'preparing'])
+        .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart))
+        .count()
+        .get();
 
-    setState(() => _isUpdating = true);
+    final count = query.count;
+    final estMin = count! * 4; // ~4 min per vehicle – adjust based on real data
+
+    return {'count': count, 'estMin': estMin};
+  }
+
+  Future<void> _handleTransfer() async {
+    if (_selectedStationId == null || _selectedStationId == widget.currentStationId) return;
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _buildModernConfirmSheet(),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isSubmitting = true);
 
     try {
-      final updateData = {
-        'stationId': newStationId,
-        'stationName': newStationName,
-        'stationAutoID': null, // if you have autoID
-        'lastStationChangedAt': FieldValue.serverTimestamp(),
-        'stationChangeCount': FieldValue.increment(1),
-        // Optional: log history
-        'stationHistory': FieldValue.arrayUnion([
-          {
-            'from': widget.currentStationName,
-            'to': newStationName,
-            'changedAt': FieldValue.serverTimestamp(),
-          }
-        ]),
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Not authenticated');
+
+      // 1. Create new preorder
+      final newData = {
+        ...widget.orderData,
+        'stationId': _selectedStationId,
+        'stationName': _selectedStationName,
+        'status': 'waiting',
+        'createdAt': FieldValue.serverTimestamp(),
+        'positionInQueue': null,
+        'transferredFrom': {
+          'orderId': widget.orderId,
+          'stationId': widget.currentStationId,
+          'stationName': widget.currentStationName,
+        },
+        'transferCount': FieldValue.increment(1),
       };
 
-      await FirebaseFirestore.instance
-          .collection('preorders')
-          .doc(widget.orderId)
-          .update(updateData);
+      final newRef = await FirebaseFirestore.instance.collection('preorders').add(newData);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Station updated successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.pop(context, true); // return true to signal change happened
-      }
+      // 2. Mark old as transferred / cancelled
+      await FirebaseFirestore.instance.collection('preorders').doc(widget.orderId).update({
+        'status': 'transferred',
+        'transferredTo': {
+          'orderId': newRef.id,
+          'stationId': _selectedStationId,
+          'stationName': _selectedStationName,
+        },
+        'cancelledAt': FieldValue.serverTimestamp(),
+        'cancelReason': 'Station changed by driver',
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order transferred to $_selectedStationName'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+
+      Navigator.pop(context, true); // success → parent can refresh
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update: $e')),
+          SnackBar(content: Text('Transfer failed: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  Widget _buildModernConfirmSheet() {
+    final fuel = widget.orderData['fuelType'] ?? '—';
+    final liters = widget.orderData['liters']?.toString() ?? '—';
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.65,
+      minChildSize: 0.5,
+      maxChildSize: 0.92,
+      builder: (context, scrollController) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: ListView(
+          controller: scrollController,
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 5,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            Text(
+              'Transfer Order',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            _buildPreviewRow('From', widget.currentStationName, Icons.arrow_outward),
+            const SizedBox(height: 16),
+            _buildPreviewRow('To', _selectedStationName ?? '', Icons.arrow_forward),
+            const SizedBox(height: 24),
+            Card(
+              elevation: 0,
+              color: Colors.green.shade50,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Order Summary', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 12),
+                    Text('$fuel • $liters L'),
+                    if (_selectedWaitingCount != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '≈ $_selectedWaitingCount waiting • ~${_selectedEstWaitMin?.toStringAsFixed(0) ?? "?"} min',
+                        style: TextStyle(color: Colors.green.shade800),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text('Confirm Transfer', style: TextStyle(fontSize: 16)),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context, false),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreviewRow(String label, String value, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.grey.shade700, size: 22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+              Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -137,36 +372,34 @@ class _ChangeStationPageState extends State<ChangeStationPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Change Fuel Station'),
+        title: const Text('Change Station'),
         centerTitle: true,
+        elevation: 0,
       ),
       body: Column(
         children: [
-          // Current selection header
-          Container(
-            width: double.infinity,
-            color: colorScheme.primaryContainer.withOpacity(0.4),
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Current Station',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: colorScheme.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  widget.currentStationName,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+          // Search bar
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: SearchBar(
+              controller: _searchCtrl,
+              leading: const Icon(Icons.search_rounded),
+              hintText: 'Search stations...',
+              elevation: const WidgetStatePropertyAll(1),
+              shape: WidgetStatePropertyAll(
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
             ),
           ),
+
+          if (_locationDenied)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                'Location access denied → sorted by name',
+                style: TextStyle(color: Colors.orange.shade800, fontSize: 13.5),
+              ),
+            ),
 
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
@@ -175,70 +408,107 @@ class _ChangeStationPageState extends State<ChangeStationPage> {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
-                if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
                   return const Center(child: Text('No stations available'));
                 }
 
-                final stations = snapshot.data!;
+                final all = snapshot.data!;
+                final filtered = _searchQuery.isEmpty
+                    ? all
+                    : all.where((s) => (s['name'] as String).toLowerCase().contains(_searchQuery)).toList();
 
                 return ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: stations.length,
-                  itemBuilder: (context, index) {
-                    final station = stations[index];
-                    final stationId = station['id'] as String;
-                    final name = station['name'] as String;
-                    final isSelected = stationId == _selectedStationId;
-                    final isCurrent = stationId == widget.currentStationId;
-                    final diesel = station['priceDiesel'] as num?;
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: filtered.length,
+                  itemBuilder: (context, i) {
+                    final s = filtered[i];
+                    final id = s['id'] as String;
+                    final name = s['name'] as String;
+                    final isSelected = id == _selectedStationId;
+                    final isCurrent = id == widget.currentStationId;
+                    final dist = s['distanceKm'] as double?;
+                    final diesel = s['priceDiesel'] as double?;
+                    final benzene = s['priceBenzene'] as double?;
+
+                    String subtitle = s['address'] as String? ?? '—';
+                    if (dist != null) subtitle = '${dist.toStringAsFixed(1)} km • $subtitle';
 
                     return Card(
-                      elevation: isSelected ? 4 : 1,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      color: isSelected ? colorScheme.primaryContainer : null,
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      elevation: isSelected ? 3 : 1,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      color: isSelected ? colorScheme.primaryContainer.withAlpha(153) : null, // 0.6 opacity ≈ 153 alpha
                       child: ListTile(
-                        leading: Icon(
-                          Icons.local_gas_station_rounded,
-                          color: isSelected ? colorScheme.primary : Colors.green[700],
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: CircleAvatar(
+                          backgroundColor: isSelected ? colorScheme.primary : Colors.green.shade100,
+                          radius: 26,
+                          child: Icon(
+                            Icons.local_gas_station_rounded,
+                            color: isSelected ? Colors.white : Colors.green.shade700,
+                          ),
                         ),
                         title: Text(
                           name,
                           style: TextStyle(
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                            color: isSelected ? colorScheme.primary : null,
+                            fontSize: 16.5,
                           ),
                         ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(station['address'] as String? ?? '—'),
-                            if (diesel != null)
-                              Text(
-                                'Diesel: ${diesel.toStringAsFixed(2)} ETB',
-                                style: TextStyle(color: Colors.green[800]),
+                            Text(subtitle, style: const TextStyle(fontSize: 13)),
+                            if (diesel != null || benzene != null) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  if (diesel != null)
+                                    Text(
+                                      'Diesel ${diesel.toStringAsFixed(1)} ',
+                                      style: TextStyle(color: Colors.green.shade800, fontSize: 12.5),
+                                    ),
+                                  if (benzene != null)
+                                    Text(
+                                      'Benzene ${benzene.toStringAsFixed(1)}',
+                                      style: TextStyle(color: Colors.blue.shade800, fontSize: 12.5),
+                                    ),
+                                ],
                               ),
+                            ],
                             if (isCurrent)
-                              Text(
-                                'Current station',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.blueGrey[600],
-                                  fontStyle: FontStyle.italic,
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'Current • queued here',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.blueGrey.shade600,
+                                    fontStyle: FontStyle.italic,
+                                  ),
                                 ),
                               ),
                           ],
                         ),
                         trailing: isSelected
-                            ? Icon(Icons.check_circle, color: colorScheme.primary)
+                            ? Icon(Icons.check_circle_rounded, color: colorScheme.primary, size: 30)
                             : null,
-                        onTap: () {
+                        onTap: () async {
                           setState(() {
-                            _selectedStationId = stationId;
+                            _selectedStationId = id;
                             _selectedStationName = name;
+                            _selectedWaitingCount = null;
+                            _selectedEstWaitMin = null;
                           });
 
-                          // Optional: auto-confirm after selection
-                          // _confirmChange(stationId, name);
+                          final info = await _getStationQueueInfo(id);
+                          if (mounted && info != null) {
+                            setState(() {
+                              _selectedWaitingCount = info['count'] as int;
+                              _selectedEstWaitMin = (info['estMin'] as int).toDouble();
+                            });
+                          }
                         },
                       ),
                     );
@@ -251,28 +521,31 @@ class _ChangeStationPageState extends State<ChangeStationPage> {
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           child: FilledButton.icon(
-            icon: _isUpdating
+            icon: _isSubmitting
                 ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white),
                   )
-                : const Icon(Icons.save_rounded),
+                : const Icon(Icons.swap_horiz_rounded),
             label: Text(
-              _isUpdating ? 'Updating...' : 'Confirm New Station',
-              style: const TextStyle(fontSize: 16),
+              _isSubmitting ? 'Transferring...' : 'Transfer Order',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              minimumSize: const Size.fromHeight(58),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              backgroundColor: _selectedStationId != widget.currentStationId && _selectedStationId != null
+                  ? null
+                  : Colors.grey.shade400,
             ),
-            onPressed: (_isUpdating ||
+            onPressed: _isSubmitting ||
                     _selectedStationId == null ||
-                    _selectedStationId == widget.currentStationId)
+                    _selectedStationId == widget.currentStationId
                 ? null
-                : () => _confirmChange(_selectedStationId!, _selectedStationName!),
+                : _handleTransfer,
           ),
         ),
       ),

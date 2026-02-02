@@ -1,9 +1,10 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DriverStationPage extends StatefulWidget {
@@ -17,7 +18,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
   List<Map<String, dynamic>> _stations = [];
   List<Map<String, dynamic>> _filteredStations = [];
   bool _isLoading = true;
-  bool _showMap = false;
   Position? _currentPosition;
   String _currentAddress = 'Fetching location...';
   double _filterRadius = 15.0; // Default 15km radius
@@ -26,12 +26,26 @@ class _DriverStationPageState extends State<DriverStationPage> {
   Map<String, int> _stationWaitingCounts = {};
   bool _locationPermissionGranted = false;
   bool _locationServiceEnabled = true;
+  
+  // Google Maps variables
+  Completer<GoogleMapController> _mapController = Completer();
+  Set<Marker> _markers = {};
+  bool _showMapView = false;
+  CameraPosition? _initialCameraPosition;
+  BitmapDescriptor? _stationIcon;
+  BitmapDescriptor? _currentLocationIcon;
 
   @override
   void initState() {
     super.initState();
     _initializeLocation();
     _loadStations();
+    _loadCustomMarkers();
+  }
+
+  Future<void> _loadCustomMarkers() async {
+    // You can load custom icons here
+    // For now, we'll use default markers
   }
 
   Future<void> _initializeLocation() async {
@@ -88,11 +102,10 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
         Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.medium,
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.medium,
-          ),
         ).timeout(const Duration(seconds: 15));
         
+        if (!mounted) return;
+
         debugPrint('Got position: ${position.latitude}, ${position.longitude}');
 
         // Get address from coordinates
@@ -101,6 +114,8 @@ class _DriverStationPageState extends State<DriverStationPage> {
             position.latitude,
             position.longitude,
           );
+
+          if (!mounted) return;
 
           String address = "Lat: ${position.latitude.toStringAsFixed(4)}, Lng: ${position.longitude.toStringAsFixed(4)}";
           
@@ -114,28 +129,47 @@ class _DriverStationPageState extends State<DriverStationPage> {
           setState(() {
             _currentPosition = position;
             _currentAddress = address;
+            // Set initial camera position for map
+            _initialCameraPosition = CameraPosition(
+              target: LatLng(position.latitude, position.longitude),
+              zoom: 12.0,
+            );
           });
           
           // Calculate distances after getting location
           _calculateDistances();
+          // Update map markers if in map view
+          if (_showMapView) {
+            _updateMapMarkers();
+          }
         } catch (e) {
           debugPrint('Error getting address: $e');
-          setState(() {
-            _currentPosition = position;
-            _currentAddress = "Location: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
-          });
+          if (mounted) {
+            setState(() {
+              _currentPosition = position;
+              _currentAddress = "Location: ${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}";
+              _initialCameraPosition = CameraPosition(
+                target: LatLng(position.latitude, position.longitude),
+                zoom: 12.0,
+              );
+            });
+          }
         }
       }
     } on TimeoutException catch (e) {
       debugPrint('Location timeout: $e');
-      setState(() {
-        _currentAddress = 'Location request timed out. Please try again.';
-      });
+      if (mounted) {
+        setState(() {
+          _currentAddress = 'Location request timed out. Please try again.';
+        });
+      }
     } catch (e) {
       debugPrint('Error getting location: $e');
-      setState(() {
-        _currentAddress = 'Unable to get location. Please check permissions.';
-      });
+      if (mounted) {
+        setState(() {
+          _currentAddress = 'Unable to get location. Please check permissions.';
+        });
+      }
     }
   }
 
@@ -145,7 +179,7 @@ class _DriverStationPageState extends State<DriverStationPage> {
           .collection('users')
           .where('role', isEqualTo: 'station')
           .where('isActive', isEqualTo: true)
-          .limit(20)
+          .limit(50)
           .get();
 
       List<Map<String, dynamic>> stations = [];
@@ -179,6 +213,13 @@ class _DriverStationPageState extends State<DriverStationPage> {
           latitude = stationDetails['latitude']?.toDouble() ?? 0.0;
           longitude = stationDetails['longitude']?.toDouble() ?? 0.0;
           phone = stationDetails['phoneNumber'] as String? ?? 'N/A';
+          
+          if (latitude == 0.0 && stationDetails['lat'] != null) {
+            latitude = stationDetails['lat']?.toDouble() ?? 0.0;
+          }
+          if (longitude == 0.0 && stationDetails['lng'] != null) {
+            longitude = stationDetails['lng']?.toDouble() ?? 0.0;
+          }
         }
         
         if (pumpsDoc.exists) {
@@ -227,21 +268,30 @@ class _DriverStationPageState extends State<DriverStationPage> {
         });
       }
 
-      setState(() {
-        _stations = stations;
-        _filteredStations = stations;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _stations = stations;
+          _filteredStations = stations;
+          _isLoading = false;
+        });
+      }
 
       // Calculate distances if we have location
       if (_currentPosition != null) {
         _calculateDistances();
       }
+      
+      // Update map markers if in map view
+      if (_showMapView) {
+        _updateMapMarkers();
+      }
     } catch (e) {
       debugPrint('Error loading stations: $e');
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -265,6 +315,16 @@ class _DriverStationPageState extends State<DriverStationPage> {
       
       if (stationDoc.exists) {
         return stationDoc.data();
+      }
+      
+      // Try stations collection as another fallback
+      final stationsDoc = await FirebaseFirestore.instance
+          .collection('stations')
+          .doc(stationId)
+          .get();
+      
+      if (stationsDoc.exists) {
+        return stationsDoc.data();
       }
     } catch (e) {
       debugPrint('Error getting station details: $e');
@@ -312,7 +372,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
     for (var station in _stations) {
       if (station['latitude'] == 0.0 && station['longitude'] == 0.0) {
-        // If no coordinates, assign a default distance
         station['distance'] = 9999.0;
         continue;
       }
@@ -353,71 +412,347 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
     setState(() {
       _filteredStations = filtered;
+      if (_showMapView) {
+        _updateMapMarkers();
+      }
     });
   }
 
-  Future<void> _openMap() async {
-    if (!_locationPermissionGranted) {
-      await _getCurrentLocation();
+  void _updateMapMarkers() {
+    Set<Marker> markers = {};
+
+    // Add current location marker
+    if (_currentPosition != null) {
+      markers.add(
+        Marker(
+          markerId: const MarkerId('current_location'),
+          position: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          infoWindow: const InfoWindow(title: 'Your Location'),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        ),
+      );
+    }
+
+    // Add station markers for filtered stations
+    int markerCount = 0;
+    for (var station in _filteredStations) {
+      if (station['latitude'] != 0.0 && station['longitude'] != 0.0 && markerCount < 50) {
+        final stationLatLng = LatLng(station['latitude'], station['longitude']);
+        
+        markers.add(
+          Marker(
+            markerId: MarkerId(station['id']),
+            position: stationLatLng,
+            infoWindow: InfoWindow(
+              title: station['name'],
+              snippet: '${station['availablePumps']}/${station['totalPumps']} pumps available\n'
+                      '${station['distance'].toStringAsFixed(1)} km away',
+            ),
+            icon: station['isOpen'] && station['availablePumps'] > 0
+                ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen)
+                : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            onTap: () {
+              _showStationInfoBottomSheet(station);
+            },
+          ),
+        );
+        markerCount++;
+      }
+    }
+
+    setState(() {
+      _markers = markers;
+    });
+
+    // If we have stations, adjust camera to show all markers
+    if (_currentPosition != null && markers.isNotEmpty) {
+      _fitMarkersToBounds();
+    }
+  }
+
+  Future<void> _fitMarkersToBounds() async {
+    if (_markers.isEmpty) return;
+
+    final controller = await _mapController.future;
+    
+    // Get bounds of all markers
+    LatLngBounds bounds = _getBounds();
+    
+    // Add padding
+    final padding = 50.0;
+    
+    // Animate camera to show all markers
+    controller.animateCamera(
+      CameraUpdate.newLatLngBounds(bounds, padding),
+    );
+  }
+
+  LatLngBounds _getBounds() {
+    double minLat = _currentPosition?.latitude ?? 9.0;
+    double maxLat = _currentPosition?.latitude ?? 9.0;
+    double minLng = _currentPosition?.longitude ?? 38.0;
+    double maxLng = _currentPosition?.longitude ?? 38.0;
+
+    // Include current position
+    if (_currentPosition != null) {
+      minLat = min(minLat, _currentPosition!.latitude);
+      maxLat = max(maxLat, _currentPosition!.latitude);
+      minLng = min(minLng, _currentPosition!.longitude);
+      maxLng = max(maxLng, _currentPosition!.longitude);
+    }
+
+    // Include all station markers
+    for (var marker in _markers) {
+      if (marker.markerId.value != 'current_location') {
+        minLat = min(minLat, marker.position.latitude);
+        maxLat = max(maxLat, marker.position.latitude);
+        minLng = min(minLng, marker.position.longitude);
+        maxLng = max(maxLng, marker.position.longitude);
+      }
+    }
+
+    // Add a small buffer
+    const buffer = 0.01;
+    return LatLngBounds(
+      southwest: LatLng(minLat - buffer, minLng - buffer),
+      northeast: LatLng(maxLat + buffer, maxLng + buffer),
+    );
+  }
+
+  void _showStationInfoBottomSheet(Map<String, dynamic> station) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      station['name'],
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: station['isOpen'] ? Colors.green[50] : Colors.red[50],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: station['isOpen'] ? Colors.green : Colors.red,
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      station['isOpen'] ? 'OPEN' : 'CLOSED',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: station['isOpen'] ? Colors.green : Colors.red,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                station['address'],
+                style: const TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _buildStatItem(
+                    Icons.directions_car,
+                    '${station['distance'].toStringAsFixed(1)} km',
+                    'Distance',
+                  ),
+                  const SizedBox(width: 16),
+                  _buildStatItem(
+                    Icons.people,
+                    '${station['waitingCount']}',
+                    'Waiting',
+                  ),
+                  const SizedBox(width: 16),
+                  _buildStatItem(
+                    Icons.local_gas_station,
+                    '${station['availablePumps']}/${station['totalPumps']}',
+                    'Pumps',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (station['fuelTypes'].isNotEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Fuel Types:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: (station['fuelTypes'] as List<String>).map((type) {
+                        return Chip(
+                          label: Text(type),
+                          backgroundColor: _getFuelTypeColor(type),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.directions),
+                  label: const Text('Get Directions'),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showDirectionsDialog(station);
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.local_gas_station),
+                  label: const Text('Pre-order Fuel'),
+                  onPressed: station['availablePumps'] > 0 && station['isOpen']
+                      ? () {
+                          Navigator.pop(context);
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => PreOrderFuelPage(
+                                stationId: station['id'],
+                                stationName: station['name'],
+                              ),
+                            ),
+                          );
+                        }
+                      : null,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildStatItem(IconData icon, String value, String label) {
+    return Column(
+      children: [
+        Icon(icon, size: 20, color: Colors.blue),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 10, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+
+  void _showDirectionsDialog(Map<String, dynamic> station) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Get Directions'),
+          content: const Text('Choose how you want to get directions:'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _openInGoogleMaps(station);
+              },
+              child: const Text('Google Maps'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _openInAppleMaps(station);
+              },
+              child: const Text('Apple Maps'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _openInGoogleMaps(Map<String, dynamic> station) {
+    String url = 'https://www.google.com/maps/dir/?api=1'
+                 '&destination=${station['latitude']},${station['longitude']}'
+                 '&travelmode=driving';
+    
+    if (_currentPosition != null) {
+      url += '&origin=${_currentPosition!.latitude},${_currentPosition!.longitude}';
+    }
+    
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  void _openInAppleMaps(Map<String, dynamic> station) {
+    String url = 'https://maps.apple.com/?daddr=${station['latitude']},${station['longitude']}';
+    
+    if (_currentPosition != null) {
+      url += '&saddr=${_currentPosition!.latitude},${_currentPosition!.longitude}';
+    }
+    
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _toggleMapView() async {
+    if (!_locationPermissionGranted || !_locationServiceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enable location services to view the map.'),
+        ),
+      );
       return;
     }
 
     if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Location not available. Please enable location services.')),
-      );
-      return;
-    }
-
-    String mapUrl = '';
-    
-    if (_filteredStations.isNotEmpty && _filteredStations.any((s) => s['latitude'] != 0.0)) {
-      // Open Google Maps with multiple markers for filtered stations
-      final origin = '${_currentPosition!.latitude},${_currentPosition!.longitude}';
-      String destinations = '';
-      
-      // Add only stations with valid coordinates
-      final validStations = _filteredStations.where((s) => s['latitude'] != 0.0).take(8).toList();
-      
-      for (var station in validStations) {
-        if (destinations.isNotEmpty) destinations += '|';
-        destinations += '${station['latitude']},${station['longitude']}';
-      }
-      
-      if (destinations.isNotEmpty) {
-        mapUrl = 'https://www.google.com/maps/dir/?api=1'
-                 '&origin=$origin'
-                 '&destination=${validStations.first['latitude']},${validStations.first['longitude']}'
-                 '&travelmode=driving'
-                 '&waypoints=$destinations';
-      } else {
-        // Fallback to just showing current location
-        mapUrl = 'https://www.google.com/maps/search/?api=1'
-                 '&query=gas+station'
-                 '&center=${_currentPosition!.latitude},${_currentPosition!.longitude}'
-                 '&zoom=13';
-      }
-    } else {
-      // Show gas stations in the region
-      mapUrl = 'https://www.google.com/maps/search/?api=1'
-               '&query=petrol+station+diesel+station+fuel+station'
-               '&center=${_currentPosition!.latitude},${_currentPosition!.longitude}'
-               '&zoom=12';
-    }
-
-    try {
-      if (await canLaunchUrl(Uri.parse(mapUrl))) {
-        await launchUrl(Uri.parse(mapUrl));
-      } else {
+      await _getCurrentLocation();
+      if (_currentPosition == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open map application')),
+          const SnackBar(
+            content: Text('Unable to get your location. Please try again.'),
+          ),
         );
+        return;
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open map: $e')),
-      );
     }
+
+    setState(() {
+      _showMapView = !_showMapView;
+      if (_showMapView) {
+        _updateMapMarkers();
+      }
+    });
   }
 
   void _showFilterDialog() {
@@ -433,7 +768,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Radius Filter
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -480,8 +814,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
                       ],
                     ),
                     const SizedBox(height: 24),
-                    
-                    // Fuel Type Filter
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -510,8 +842,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
                         ),
                       ],
                     ),
-                    
-                    // Current Location Info
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -619,6 +949,111 @@ class _DriverStationPageState extends State<DriverStationPage> {
     );
   }
 
+  Widget _buildMapView() {
+    if (_initialCameraPosition == null) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    return Column(
+      children: [
+        // Map controls
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: _toggleMapView,
+              ),
+              Expanded(
+                child: Text(
+                  'Map View (${_markers.length - 1} stations)',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.my_location),
+                onPressed: _centerMapOnUser,
+              ),
+              IconButton(
+                icon: const Icon(Icons.filter_list),
+                onPressed: _showFilterDialog,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: GoogleMap(
+            initialCameraPosition: _initialCameraPosition!,
+            onMapCreated: (controller) {
+              _mapController.complete(controller);
+            },
+            markers: _markers,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+          ),
+        ),
+        // Legend
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildLegendItem(Colors.green, 'Available'),
+              const SizedBox(width: 16),
+              _buildLegendItem(Colors.red, 'No Pumps/Closed'),
+              const SizedBox(width: 16),
+              _buildLegendItem(Colors.blue, 'Your Location'),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLegendItem(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _centerMapOnUser() async {
+    if (_currentPosition == null) return;
+    
+    final controller = await _mapController.future;
+    controller.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+          zoom: 14.0,
+        ),
+      ),
+    );
+  }
+
   Widget _buildStationCard(Map<String, dynamic> station) {
     bool isOpen = station['isOpen'];
     double distance = station['distance'];
@@ -640,7 +1075,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header with Name and Status
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -722,7 +1156,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
             const SizedBox(height: 12),
 
-            // Stats Row
             Row(
               children: [
                 Expanded(
@@ -845,7 +1278,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
             const SizedBox(height: 12),
 
-            // Pump Availability
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -888,7 +1320,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
             const SizedBox(height: 8),
 
-            // Fuel Types
             if (fuelTypes.isNotEmpty)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -925,7 +1356,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
             const SizedBox(height: 12),
 
-            // Action Buttons
             Column(
               children: [
                 SizedBox(
@@ -971,10 +1401,7 @@ class _DriverStationPageState extends State<DriverStationPage> {
                             icon: const Icon(Icons.directions, size: 18),
                             label: const Text('Directions'),
                             onPressed: () {
-                              final url = 'https://www.google.com/maps/dir/?api=1'
-                                          '&destination=${station['latitude']},${station['longitude']}'
-                                          '&travelmode=driving';
-                              launchUrl(Uri.parse(url));
+                              _showDirectionsDialog(station);
                             },
                           ),
                         ),
@@ -1121,6 +1548,12 @@ class _DriverStationPageState extends State<DriverStationPage> {
               _getCurrentLocation();
             },
           ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.map),
+            label: const Text('Open Map View'),
+            onPressed: _toggleMapView,
+          ),
         ],
       ),
     );
@@ -1132,6 +1565,11 @@ class _DriverStationPageState extends State<DriverStationPage> {
       appBar: AppBar(
         title: const Text('Fuel Stations'),
         actions: [
+          IconButton(
+            icon: Icon(_showMapView ? Icons.list : Icons.map),
+            tooltip: _showMapView ? 'Show List' : 'Show Map',
+            onPressed: _toggleMapView,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
@@ -1146,170 +1584,196 @@ class _DriverStationPageState extends State<DriverStationPage> {
       ),
       body: _isLoading
           ? _buildLoadingUI()
-          : (!_locationPermissionGranted || !_locationServiceEnabled)
+          : (!_locationPermissionGranted && !_locationServiceEnabled)
               ? _buildLocationErrorUI()
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Header with Filters
-                      Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              : _showMapView
+                  ? _buildMapView()
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Card(
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'Nearby Stations',
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  Chip(
-                                    label: Text('${_filteredStations.length}'),
-                                    backgroundColor: Colors.blue[50],
-                                    labelStyle: const TextStyle(
-                                      color: Colors.blue,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.location_on,
-                                    size: 16,
-                                    color: Colors.blue,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      _currentAddress,
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Colors.grey[600],
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      const Text(
+                                        'Nearby Stations',
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: FilledButton.icon(
-                                      icon: const Icon(Icons.map, size: 20),
-                                      label: const Text('Open Map'),
-                                      style: FilledButton.styleFrom(
-                                        minimumSize: const Size.fromHeight(50),
+                                      Chip(
+                                        label: Text('${_filteredStations.length}'),
+                                        backgroundColor: Colors.blue[50],
+                                        labelStyle: const TextStyle(
+                                          color: Colors.blue,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
-                                      onPressed: _openMap,
-                                    ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      icon: const Icon(Icons.filter_list, size: 20),
-                                      label: const Text('Filter Stations'),
-                                      style: OutlinedButton.styleFrom(
-                                        minimumSize: const Size.fromHeight(50),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.location_on,
+                                        size: 16,
+                                        color: Colors.blue,
                                       ),
-                                      onPressed: _showFilterDialog,
-                                    ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          _currentAddress,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[600],
+                                          ),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              if (_filterRadius != 15.0 || _selectedFuelType != 'All')
-                                Column(
-                                  children: [
-                                    const SizedBox(height: 12),
-                                    Row(
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: FilledButton.icon(
+                                          icon: const Icon(Icons.map, size: 20),
+                                          label: const Text('Open Map'),
+                                          style: FilledButton.styleFrom(
+                                            minimumSize: const Size.fromHeight(50),
+                                          ),
+                                          onPressed: _toggleMapView,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          icon: const Icon(Icons.filter_list, size: 20),
+                                          label: const Text('Filter Stations'),
+                                          style: OutlinedButton.styleFrom(
+                                            minimumSize: const Size.fromHeight(50),
+                                          ),
+                                          onPressed: _showFilterDialog,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        'Showing stations with coordinates',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_filterRadius != 15.0 || _selectedFuelType != 'All')
+                                    Column(
                                       children: [
-                                        if (_filterRadius != 15.0)
-                                          Chip(
-                                            label: Text('Radius: ${_filterRadius.toInt()}km'),
-                                            onDeleted: () {
-                                              setState(() {
-                                                _filterRadius = 15.0;
-                                                _applyFilters();
-                                              });
-                                            },
-                                          ),
-                                        if (_selectedFuelType != 'All') ...[
-                                          const SizedBox(width: 8),
-                                          Chip(
-                                            label: Text('Fuel: $_selectedFuelType'),
-                                            onDeleted: () {
-                                              setState(() {
-                                                _selectedFuelType = 'All';
-                                                _applyFilters();
-                                              });
-                                            },
-                                          ),
-                                        ],
-                                        const Spacer(),
-                                        TextButton(
-                                          onPressed: () {
-                                            setState(() {
-                                              _filterRadius = 15.0;
-                                              _selectedFuelType = 'All';
-                                              _applyFilters();
-                                            });
-                                          },
-                                          child: const Text('Clear all'),
+                                        const SizedBox(height: 12),
+                                        Row(
+                                          children: [
+                                            if (_filterRadius != 15.0)
+                                              Chip(
+                                                label: Text('Radius: ${_filterRadius.toInt()}km'),
+                                                onDeleted: () {
+                                                  setState(() {
+                                                    _filterRadius = 15.0;
+                                                    _applyFilters();
+                                                  });
+                                                },
+                                              ),
+                                            if (_selectedFuelType != 'All') ...[
+                                              const SizedBox(width: 8),
+                                              Chip(
+                                                label: Text('Fuel: $_selectedFuelType'),
+                                                onDeleted: () {
+                                                  setState(() {
+                                                    _selectedFuelType = 'All';
+                                                    _applyFilters();
+                                                  });
+                                                },
+                                              ),
+                                            ],
+                                            const Spacer(),
+                                            TextButton(
+                                              onPressed: () {
+                                                setState(() {
+                                                  _filterRadius = 15.0;
+                                                  _selectedFuelType = 'All';
+                                                  _applyFilters();
+                                                });
+                                              },
+                                              child: const Text('Clear all'),
+                                            ),
+                                          ],
                                         ),
                                       ],
                                     ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Stations List
-                      if (_filteredStations.isEmpty)
-                        _buildNoStationsUI()
-                      else
-                        Column(
-                          children: [
-                            ..._filteredStations.map((station) {
-                              return _buildStationCard(station);
-                            }),
-                            const SizedBox(height: 32),
-                            Text(
-                              'Showing stations within ${_filterRadius.toInt()}km radius',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
+                                ],
                               ),
                             ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // Stations List
+                          if (_filteredStations.isEmpty)
+                            _buildNoStationsUI()
+                          else
+                            Column(
+                              children: [
+                                ..._filteredStations.map((station) {
+                                  return _buildStationCard(station);
+                                }),
+                                const SizedBox(height: 32),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Showing ${_filteredStations.length} of ${_stations.length} stations',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                      TextButton.icon(
+                                        icon: const Icon(Icons.map, size: 16),
+                                        label: const Text('View on Map'),
+                                        onPressed: _toggleMapView,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ),
     );
   }
 }
 
-// Placeholder classes - replace with your actual implementations
+// Placeholder classes
 class StationQueuePage extends StatelessWidget {
   final String stationId;
   final String stationName;

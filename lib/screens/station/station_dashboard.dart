@@ -10,9 +10,9 @@ import 'station_inventory_page.dart';
 import 'station_customers_page.dart';
 import 'station_settings_page.dart';
 import 'station_help_support_page.dart';
-import 'station_notifications_page.dart';           // ← added this import
+import 'station_notifications_page.dart';
 
-import '../../services/auth_user_service.dart'; // adjust path as needed
+import '../../services/auth_user_service.dart';
 
 class StationDashboard extends StatefulWidget {
   const StationDashboard({super.key});
@@ -30,8 +30,8 @@ class _StationDashboardState extends State<StationDashboard> {
   bool _isLoading = true;
   bool _isLoggingOut = false;
 
-  // We'll keep this for display — later you can make it dynamic from Firestore stream
-  int _notificationCount = 7; // placeholder — in real app → listen to unread count
+  // Make notification count mutable so we can update it
+  int _notificationCount = 7;
 
   static const List<Widget> _pages = <Widget>[
     StationHomePage(),
@@ -44,6 +44,7 @@ class _StationDashboardState extends State<StationDashboard> {
   void initState() {
     super.initState();
     _loadStationInfo();
+    // In real app, set up Firestore listener for real-time notifications
   }
 
   Future<void> _loadStationInfo() async {
@@ -112,7 +113,7 @@ class _StationDashboardState extends State<StationDashboard> {
 
       Navigator.pushNamedAndRemoveUntil(
         context,
-        '/', // ← change to '/login' if that's your actual login route
+        '/',
         (route) => false,
       );
     } catch (e) {
@@ -138,15 +139,31 @@ class _StationDashboardState extends State<StationDashboard> {
     );
   }
 
-  void _onNotificationPressed() {
-    Navigator.of(context).push(
+  Future<void> _onNotificationPressed() async {
+    // Navigate to notifications page
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => const StationNotificationsPage(),
       ),
     );
+    
+    // Update badge count when returning from notifications
+    if (mounted) {
+      setState(() {
+        _notificationCount = 0; // Reset since user viewed notifications
+      });
+    }
+  }
 
-    // Optional: you can reset the badge here after viewing
-    // setState(() => _notificationCount = 0);
+  void _openSettings() {
+    Navigator.pop(context); // Close drawer first
+    _pushNewScreen(const StationSettingsPage());
+  }
+
+  // Add this method for navigating to help & support
+  void _openHelpSupport() {
+    Navigator.pop(context); // Close drawer first
+    _pushNewScreen(const StationHelpSupportPage());
   }
 
   @override
@@ -176,9 +193,15 @@ class _StationDashboardState extends State<StationDashboard> {
                 fontWeight: FontWeight.bold,
               ),
               child: IconButton(
-                icon: const Icon(Icons.notifications_none_rounded),
-                iconSize: 26,
-                tooltip: 'Notifications',
+                icon: Icon(
+                  _notificationCount > 0
+                      ? Icons.notifications
+                      : Icons.notifications_none_rounded,
+                  size: 26,
+                ),
+                tooltip: _notificationCount > 0
+                    ? '$_notificationCount unread notification${_notificationCount > 1 ? 's' : ''}'
+                    : 'Notifications',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
                 onPressed: _onNotificationPressed,
@@ -233,18 +256,12 @@ class _StationDashboardState extends State<StationDashboard> {
             ListTile(
               leading: const Icon(Icons.settings),
               title: const Text('Settings'),
-              onTap: () {
-                Navigator.pop(context);
-                _pushNewScreen(const StationSettingsPage());
-              },
+              onTap: _openSettings,
             ),
             ListTile(
               leading: const Icon(Icons.help_outline),
               title: const Text('Help & Support'),
-              onTap: () {
-                Navigator.pop(context);
-                _pushNewScreen(const StationHelpSupportPage());
-              },
+              onTap: _openHelpSupport, // Use the new method
             ),
             const Divider(),
             ListTile(
@@ -298,31 +315,86 @@ class _StationDashboardState extends State<StationDashboard> {
               children: _pages,
             ),
 
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _onItemTapped,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.schedule_outlined),
-            selectedIcon: Icon(Icons.schedule),
-            label: 'Pre-orders',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history_outlined),
-            selectedIcon: Icon(Icons.history),
-            label: 'History',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
+      bottomNavigationBar: _buildModernBottomNavBar(),
+    );
+  }
+
+  Widget _buildModernBottomNavBar() {
+    final List<BottomTab> tabs = [
+      BottomTab(icon: Icons.home_outlined, selectedIcon: Icons.home, label: 'Home'),
+      BottomTab(icon: Icons.schedule_outlined, selectedIcon: Icons.schedule, label: 'Pre-orders'),
+      BottomTab(icon: Icons.history_outlined, selectedIcon: Icons.history, label: 'History'),
+      BottomTab(icon: Icons.person_outlined, selectedIcon: Icons.person, label: 'Profile'),
+    ];
+
+    return Container(
+      margin: EdgeInsets.zero,
+      height: 90,
+      padding: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        border: Border(
+          top: BorderSide(color: const Color(0xFF256af4).withAlpha(51)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF256af4).withAlpha(26),
+            blurRadius: 20,
+            spreadRadius: 0,
+            offset: const Offset(0, -4),
           ),
         ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: tabs.asMap().entries.map((entry) {
+          final index = entry.key;
+          final tab = entry.value;
+          final isActive = index == _selectedIndex;
+
+          return GestureDetector(
+            onTap: () => _onItemTapped(index),
+            behavior: HitTestBehavior.opaque,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutBack,
+              padding: EdgeInsets.symmetric(
+                horizontal: isActive ? 20 : 12,
+                vertical: 10,
+              ),
+              decoration: isActive
+                  ? BoxDecoration(
+                      color: const Color(0xFF256af4).withAlpha(51),
+                      borderRadius: BorderRadius.circular(30),
+                    )
+                  : null,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isActive ? tab.selectedIcon : tab.icon,
+                    color: isActive
+                        ? const Color(0xFF256af4)
+                        : Colors.grey[500],
+                    size: 24,
+                  ),
+                  if (isActive) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      tab.label,
+                      style: const TextStyle(
+                        color: Color(0xFF256af4),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -354,4 +426,16 @@ class _StationDashboardState extends State<StationDashboard> {
         return 'Station';
     }
   }
+}
+
+class BottomTab {
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+
+  BottomTab({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
 }

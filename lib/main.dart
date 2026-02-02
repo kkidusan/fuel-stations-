@@ -4,9 +4,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'firebase_options.dart';
-import 'providers/theme_provider.dart';
+import 'providers/app_provider.dart'; // Changed from theme_provider to app_provider
 import 'screens/splash_screen.dart';
-import 'screens/auth/auth_wrapper.dart';           // ← key: this handles login → correct dashboard
 import 'l10n/app_localizations.dart';
 
 void main() async {
@@ -31,14 +30,21 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
-      create: (context) => ThemeProvider(),
-      child: Consumer<ThemeProvider>(
-        builder: (context, themeProvider, child) {
+      create: (context) {
+        final provider = AppProvider();
+        // Initialize the provider asynchronously
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          provider.loadPreferences();
+        });
+        return provider;
+      },
+      child: Consumer<AppProvider>(
+        builder: (context, provider, child) {
           return MaterialApp(
             title: 'Gas Station ET',
             debugShowCheckedModeBanner: false,
 
-            // Localization setup (English + Amharic)
+            // Localization setup (English + Amharic + others)
             localizationsDelegates: const [
               AppLocalizations.delegate,
               GlobalMaterialLocalizations.delegate,
@@ -48,30 +54,70 @@ class MyApp extends StatelessWidget {
             supportedLocales: const [
               Locale('en'),
               Locale('am'),
+              Locale('es'),
+              Locale('fr'),
+              Locale('ar'),
             ],
-            locale: themeProvider.locale,
+            locale: provider.locale,
 
             // Theme settings
             theme: ThemeData(
               useMaterial3: true,
-              colorSchemeSeed: Colors.blue,
+              colorSchemeSeed: const Color(0xFF256af4), // Matching your dashboard blue
               brightness: Brightness.light,
-              // You can customize more if needed
               scaffoldBackgroundColor: Colors.grey[50],
               appBarTheme: const AppBarTheme(
                 elevation: 0,
                 centerTitle: true,
+                backgroundColor: Color(0xFF256af4),
+                titleTextStyle: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600,
+                ),
+                iconTheme: IconThemeData(color: Colors.white),
+              ),
+              bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+                backgroundColor: Colors.white,
+                selectedItemColor: Color(0xFF256af4),
+                unselectedItemColor: Colors.grey,
+                elevation: 8,
+              ),
+              cardTheme: CardThemeData(
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               ),
             ),
             darkTheme: ThemeData(
               useMaterial3: true,
-              colorSchemeSeed: Colors.blue,
+              colorSchemeSeed: const Color(0xFF256af4), // Matching your dashboard blue
               brightness: Brightness.dark,
+              scaffoldBackgroundColor: const Color(0xFF121212),
+              appBarTheme: const AppBarTheme(
+                elevation: 0,
+                centerTitle: true,
+                backgroundColor: Color(0xFF1E1E1E),
+              ),
+              cardTheme: CardThemeData(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                color: const Color(0xFF1E1E1E),
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
+              bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+                backgroundColor: Color(0xFF1E1E1E),
+                selectedItemColor: Color(0xFF4d8df7),
+                unselectedItemColor: Colors.grey,
+              ),
             ),
-            themeMode: themeProvider.themeMode,
+            themeMode: provider.themeMode,
 
             // Root of the app navigation
-            // SplashScreen → AuthWrapper → (LoginScreen or correct Dashboard)
             home: const SplashScreen(),
           );
         },

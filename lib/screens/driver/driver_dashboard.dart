@@ -8,6 +8,8 @@ import 'driver_profile_page.dart';
 import 'driver_station_page.dart';
 import 'driver_history_page.dart';
 import 'driver_notifications_page.dart';
+import 'driver_settings_page.dart';
+import 'driver_help_support_page.dart'; // Add this import
 
 class DriverDashboard extends StatefulWidget {
   const DriverDashboard({super.key});
@@ -23,12 +25,15 @@ class _DriverDashboardState extends State<DriverDashboard> {
   String _role = 'Loading...';
   bool _isLoading = true;
 
-  int _unreadNotifications = 5; // ← will be replaced with real data later
+  // This will be updated when notifications are marked as read
+  int _unreadNotifications = 5;
 
   @override
   void initState() {
     super.initState();
     _loadUserInfo();
+    // In real app, you might set up a Firestore listener here
+    // to get real-time notification count
   }
 
   Future<void> _loadUserInfo() async {
@@ -39,8 +44,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
       if (!mounted) return;
 
       setState(() {
-        _email = email ?? 'No email';
-        _role = role ?? 'unknown';
+        _email = email;
+        _role = role;
         _isLoading = false;
       });
     } catch (e) {
@@ -66,19 +71,42 @@ class _DriverDashboardState extends State<DriverDashboard> {
     setState(() => _selectedIndex = index);
   }
 
-  void _openNotifications() {
-    Navigator.push(
+  void _openNotifications() async {
+    // Navigate to notifications page and wait for result
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => const DriverNotificationsPage(),
       ),
-    ).then((_) {
-      // Optional: refresh count logic here in real app
-      // For now we simulate "viewed → clear badge"
-      if (_unreadNotifications > 0) {
-        setState(() => _unreadNotifications = 0);
-      }
-    });
+    );
+    
+    // When returning from notifications page, update the badge count
+    // In real app, fetch actual unread count from database
+    if (mounted) {
+      setState(() {
+        // Simulate reading notifications
+        _unreadNotifications = 0; // Reset to 0 since user viewed notifications
+      });
+    }
+  }
+
+  void _openSettings() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const DriverSettingsPage(),
+      ),
+    );
+  }
+
+  // Add this method for navigating to help & support
+  void _openHelpSupport() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const DriverHelpSupportPage(),
+      ),
+    );
   }
 
   @override
@@ -92,15 +120,14 @@ class _DriverDashboardState extends State<DriverDashboard> {
         elevation: 0,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 4.0), // tighter right padding
+            padding: const EdgeInsets.only(right: 4.0),
             child: Badge.count(
               count: _unreadNotifications,
               isLabelVisible: _unreadNotifications > 0,
               smallSize: 12,
               largeSize: 16,
               alignment: Alignment.topRight,
-              // ── Key values for tight/modern overlap ──
-              offset: const Offset(-8, 4),     // pulls badge left & slightly down
+              offset: const Offset(-8, 4),
               padding: EdgeInsets.zero,
               backgroundColor: Colors.redAccent.shade700,
               textColor: Colors.white,
@@ -117,7 +144,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
                   size: 26,
                 ),
                 tooltip: _unreadNotifications > 0
-                    ? '$_unreadNotifications unread'
+                    ? '$_unreadNotifications unread notification${_unreadNotifications > 1 ? 's' : ''}'
                     : 'Notifications',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
@@ -131,31 +158,86 @@ class _DriverDashboardState extends State<DriverDashboard> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _pages[_selectedIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _onItemTapped,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.local_gas_station_outlined),
-            selectedIcon: Icon(Icons.local_gas_station),
-            label: 'Station',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history_outlined),
-            selectedIcon: Icon(Icons.history),
-            label: 'History',
+      bottomNavigationBar: _buildModernBottomNavBar(),
+    );
+  }
+
+  Widget _buildModernBottomNavBar() {
+    final List<BottomTab> tabs = [
+      BottomTab(icon: Icons.home_outlined, selectedIcon: Icons.home, label: 'Home'),
+      BottomTab(icon: Icons.person_outlined, selectedIcon: Icons.person, label: 'Profile'),
+      BottomTab(icon: Icons.local_gas_station_outlined, selectedIcon: Icons.local_gas_station, label: 'Station'),
+      BottomTab(icon: Icons.history_outlined, selectedIcon: Icons.history, label: 'History'),
+    ];
+
+    return Container(
+      margin: EdgeInsets.zero,
+      height: 90,
+      padding: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        border: Border(
+          top: BorderSide(color: const Color(0xFF256af4).withAlpha(51)),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF256af4).withAlpha(26),
+            blurRadius: 20,
+            spreadRadius: 0,
+            offset: const Offset(0, -4),
           ),
         ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: tabs.asMap().entries.map((entry) {
+          final index = entry.key;
+          final tab = entry.value;
+          final isActive = index == _selectedIndex;
+
+          return GestureDetector(
+            onTap: () => _onItemTapped(index),
+            behavior: HitTestBehavior.opaque,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutBack,
+              padding: EdgeInsets.symmetric(
+                horizontal: isActive ? 20 : 12,
+                vertical: 10,
+              ),
+              decoration: isActive
+                  ? BoxDecoration(
+                      color: const Color(0xFF256af4).withAlpha(51),
+                      borderRadius: BorderRadius.circular(30),
+                    )
+                  : null,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isActive ? tab.selectedIcon : tab.icon,
+                    color: isActive
+                        ? const Color(0xFF256af4)
+                        : Colors.grey[500],
+                    size: 24,
+                  ),
+                  if (isActive) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      tab.label,
+                      style: const TextStyle(
+                        color: Color(0xFF256af4),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -199,8 +281,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
               smallSize: 12,
               largeSize: 16,
               alignment: Alignment.topRight,
-              // Adjusted for drawer list tile (icon is smaller/larger spacing)
-              offset: const Offset(-10, 3),   // ← tight overlap like app bar
+              offset: const Offset(-10, 3),
               padding: EdgeInsets.zero,
               backgroundColor: Colors.redAccent.shade700,
               textColor: Colors.white,
@@ -212,6 +293,9 @@ class _DriverDashboardState extends State<DriverDashboard> {
               child: const Icon(Icons.notifications, size: 26),
             ),
             title: const Text('Notifications'),
+            subtitle: _unreadNotifications > 0 
+                ? Text('$_unreadNotifications unread')
+                : null,
             onTap: () {
               Navigator.pop(context);
               _openNotifications();
@@ -250,7 +334,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
             title: const Text('Available Orders'),
             onTap: () {
               Navigator.pop(context);
-              // TODO: push to AvailableOrdersScreen
+             
             },
           ),
           ListTile(
@@ -258,7 +342,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
             title: const Text('Earnings & Payouts'),
             onTap: () {
               Navigator.pop(context);
-              // TODO
+               
             },
           ),
           const Divider(),
@@ -267,7 +351,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
             title: const Text('Settings'),
             onTap: () {
               Navigator.pop(context);
-              // TODO
+              _openSettings();
             },
           ),
           ListTile(
@@ -275,7 +359,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
             title: const Text('Help & Support'),
             onTap: () {
               Navigator.pop(context);
-              // TODO
+              _openHelpSupport(); // Use the new method
             },
           ),
           const Divider(),
@@ -290,7 +374,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
 
               Navigator.pushNamedAndRemoveUntil(
                 context,
-                '/', // ← your login / splash / auth wrapper route
+                '/',
                 (route) => false,
               );
             },
@@ -299,4 +383,16 @@ class _DriverDashboardState extends State<DriverDashboard> {
       ),
     );
   }
+}
+
+class BottomTab {
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+
+  BottomTab({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
 }

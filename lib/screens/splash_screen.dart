@@ -53,7 +53,7 @@ class _SplashScreenState extends State<SplashScreen> {
     final loc = AppLocalizations.of(context)!;
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
         child: Center(
           child: Column(
@@ -74,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 style: TextStyle(
                   fontSize: 40,
                   fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onBackground,
+                  color: Theme.of(context).colorScheme.onSurface,
                   letterSpacing: 1.2,
                 ),
               ),
@@ -86,7 +86,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 'Fuel Delivery in Ethiopia',
                 style: TextStyle(
                   fontSize: 18,
-                  color: Theme.of(context).colorScheme.onBackground.withOpacity(0.7),
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                 ),
               ),
 

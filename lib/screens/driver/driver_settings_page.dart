@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '/providers/app_provider.dart';
 
-class StationSettingsPage extends StatelessWidget {
-  const StationSettingsPage({Key? key}) : super(key: key);
+class DriverSettingsPage extends StatelessWidget {
+  const DriverSettingsPage({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {

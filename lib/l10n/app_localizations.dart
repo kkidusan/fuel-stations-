@@ -67,6 +67,8 @@ class AppLocalizations {
   String get rideNotFound     => _current['rideNotFound'] ?? 'Ride not found';
   String get goOffline        => _current['goOffline'] ?? 'Go Offline';
   String get lookingForNearby => _current['lookingForNearby'] ?? 'Looking for nearby stations...';
+
+  String? get pleaseEnterEmail => null;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {

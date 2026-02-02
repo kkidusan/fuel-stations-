@@ -3,13 +3,39 @@
     <!-- Permissions go here (before <application>) -->
     <uses-permission android:name="android.permission.CAMERA" />
     
+    <!-- Location Permissions -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    
+    <!-- Internet Permission -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- For Android 10+ -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    
+    <!-- Queries for URL launching -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="google.navigation" />
+        </intent>
+    </queries> 
+    
     <!-- Optional but recommended: declare camera feature (not required) -->
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
 
     <application
-        android:label="gas"
+        android:label="ETFUEL"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 

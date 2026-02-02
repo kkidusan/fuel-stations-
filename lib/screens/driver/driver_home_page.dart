@@ -240,6 +240,9 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
   String? _userEmail;
   late Future<List<Map<String, dynamic>>> _stationsFuture;
+  
+  // Cache for station status
+  final Map<String, bool> _stationStatusCache = {};
 
   final List<Map<String, String>> _promotions = [
     {'title': 'Fuel & Win Big!', 'subtitle': 'Refuel 50L+ this week → chance to win 5,000 ETB', 'color': '0xFF1976D2'},
@@ -264,28 +267,47 @@ class _DriverHomePageState extends State<DriverHomePage> {
           .limit(15)
           .get();
 
-      return snapshot.docs.map((doc) {
+      final stations = <Map<String, dynamic>>[];
+      
+      // Fetch status for each station
+      for (final doc in snapshot.docs) {
         final data = doc.data();
         final name = data['name'] as String? ?? 'Unnamed Station';
         final address = data['address'] as String? ?? 'No address available';
         final autoID = data['autoID'] as String? ?? 'no-autoID';
-
-        return {
+        final isOpen = data['isOpen'] as bool? ?? true; // Default to open if not specified
+        
+        // Cache the status
+        final stationId = autoID != null && autoID != 'no-autoID' && autoID.trim().isNotEmpty 
+            ? autoID.trim() 
+            : doc.id;
+        _stationStatusCache[stationId] = isOpen;
+        
+        stations.add({
           'name': name,
           'address': address,
           'autoID': autoID,
           'stationDocId': doc.id,
-          'distance': address, // TODO: real distance calc
-          'price': 'Diesel 65.50 ETB/L', // TODO: real price
+          'distance': address, 
+          'price': 'Diesel 65.50 ETB/L', 
+          'isOpen': isOpen,
           'isRecommended': name.toLowerCase().contains('total') ||
               name.toLowerCase().contains('noc') ||
               name.toLowerCase().contains('mis'),
-        };
-      }).toList();
+        });
+      }
+      
+      return stations;
     } catch (e) {
       debugPrint("Error fetching stations: $e");
       return [];
     }
+  }
+  
+  // Helper method to get station status
+  bool _isStationOpen(Map<String, dynamic> station) {
+    final stationId = _getStationId(station);
+    return _stationStatusCache[stationId] ?? true; // Default to open if not cached
   }
 
   @override
@@ -602,7 +624,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
               // Very Compact Stations List - only count today's waiting
               SliverToBoxAdapter(
                 child: SizedBox(
-                  height: 88,
+                  height: 114,
                   child: FutureBuilder<List<Map<String, dynamic>>>(
                     future: _stationsFuture,
                     builder: (context, snapshot) {
@@ -643,6 +665,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     ColorScheme colorScheme,
   ) {
     final recommended = station['isRecommended'] == true;
+    final isOpen = _isStationOpen(station);
     final stationId = _getStationId(station);
 
     // Only count today's waiting orders
@@ -651,7 +674,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     return SizedBox(
       width: 258,
       child: GestureDetector(
-        onTap: () {
+        onTap: isOpen ? () {
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -663,118 +686,198 @@ class _DriverHomePageState extends State<DriverHomePage> {
               ),
             ),
           );
-        },
+        } : null,
         child: Card(
           elevation: recommended ? 2.5 : 1,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          color: recommended ? colorScheme.primaryContainer.withAlpha(46) : null,
+          color: isOpen 
+              ? (recommended ? colorScheme.primaryContainer.withAlpha(46) : null)
+              : Colors.grey[100], // Grey background for closed stations
           margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.local_gas_station_rounded,
-                      color: Colors.green[700],
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        station['name'],
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w700,
-                          height: 1.15,
+          child: Opacity(
+            opacity: isOpen ? 1.0 : 0.7, // Dim closed stations
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.local_gas_station_rounded,
+                        color: isOpen ? Colors.green[700] : Colors.grey[600],
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              station['name'],
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w700,
+                                height: 1.15,
+                                color: isOpen ? null : Colors.grey[600],
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: isOpen ? Colors.green[50] : Colors.grey[200],
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: isOpen ? Colors.green : Colors.grey,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        isOpen ? Icons.check_circle : Icons.cancel,
+                                        size: 10,
+                                        color: isOpen ? Colors.green : Colors.red,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        isOpen ? 'OPEN' : 'CLOSED',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                          color: isOpen ? Colors.green[800] : Colors.red[800],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (recommended && isOpen)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 6),
+                                    child: const Icon(
+                                      Icons.recommend_rounded,
+                                      color: Colors.blue,
+                                      size: 14,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    if (recommended)
-                      const Icon(
-                        Icons.recommend_rounded,
-                        color: Colors.blue,
-                        size: 16,
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            station['price'],
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontSize: 13.8,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.green[800],
-                              height: 1.1,
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              station['price'],
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontSize: 13.8,
+                                fontWeight: FontWeight.w800,
+                                color: isOpen ? Colors.green[800] : Colors.grey[600],
+                                height: 1.1,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '≈ ${station['distance']}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: 10.8,
-                              color: Colors.grey[700],
+                            const SizedBox(height: 2),
+                            Text(
+                              '≈ ${station['distance']}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                fontSize: 10.8,
+                                color: isOpen ? Colors.grey[700] : Colors.grey[500],
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    StreamBuilder<QuerySnapshot>(
-                      stream: waitingStream,
-                      builder: (context, snapshot) {
-                        final count = snapshot.hasData ? snapshot.data!.size : 0;
-                        final isLow = count <= 4;
-                        final est = count == 0 ? 'No wait' : '~${count * 2} min';
+                      const SizedBox(width: 10),
+                      if (isOpen)
+                        StreamBuilder<QuerySnapshot>(
+                          stream: waitingStream,
+                          builder: (context, snapshot) {
+                            final count = snapshot.hasData ? snapshot.data!.size : 0;
+                            final isLow = count <= 4;
+                            final est = count == 0 ? 'No wait' : '~${count * 2} min';
 
-                        return Column(
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: isLow ? Colors.green[100] : Colors.orange[100],
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    '$count waiting',
+                                    style: TextStyle(
+                                      fontSize: 11.8,
+                                      fontWeight: FontWeight.w700,
+                                      color: isLow ? Colors.green[800] : Colors.orange[900],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  est,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    fontSize: 10.5,
+                                    color: isLow ? Colors.green[700] : Colors.orange[800],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        )
+                      else
+                        Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                               decoration: BoxDecoration(
-                                color: isLow ? Colors.green[100] : Colors.orange[100],
+                                color: Colors.grey[200],
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
-                                '$count waiting',
+                                'Closed',
                                 style: TextStyle(
                                   fontSize: 11.8,
                                   fontWeight: FontWeight.w700,
-                                  color: isLow ? Colors.green[800] : Colors.orange[900],
+                                  color: Colors.grey[800],
                                 ),
                               ),
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              est,
+                              'Check hours',
                               style: theme.textTheme.bodySmall?.copyWith(
                                 fontSize: 10.5,
-                                color: isLow ? Colors.green[700] : Colors.orange[800],
+                                color: Colors.grey[600],
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
                           ],
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ],
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),

@@ -2,10 +2,16 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../../l10n/app_localizations.dart';
-import '../signup_screen.dart'; // Adjust path if needed
+import '../signup_screen.dart';
+import '../../services/auth_user_service.dart'; // Add this import
+import '../user/user_dashboard.dart'; // Add this import
+import '../driver/driver_dashboard.dart'; // Add this import
+import '../station/station_dashboard.dart'; // Add this import
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final VoidCallback? onLoginSuccess;
+  
+  const LoginScreen({super.key, this.onLoginSuccess});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -26,7 +32,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = _passwordController.text.trim();
 
     if (email.isEmpty || password.isEmpty) {
-      setState(() => _errorMessage = loc.pleaseFillAllFields ?? 'Please fill in all fields');
+      setState(() => _errorMessage = loc.pleaseFillAllFields);
       return;
     }
 
@@ -36,43 +42,62 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      print('=== LOGIN ATTEMPT ===');
+      print('Email: $email');
+      
+      final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // ───────────────────────────────────────────────
-      // IMPORTANT: No Navigator.push / pushReplacement here!
-      // AuthWrapper listens to auth state and redirects automatically
-      // ───────────────────────────────────────────────
-
+      print('=== LOGIN SUCCESSFUL ===');
+      print('User ID: ${userCredential.user?.uid}');
+      
       if (mounted) {
+        // Force Firebase to update auth state
+        await FirebaseAuth.instance.currentUser?.reload();
+        
+        // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(loc.loginSuccessful ?? 'Login successful!'),
+            content: Text(loc.loginSuccessful),
             backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 1),
           ),
         );
+        
+        // Wait briefly for state to sync
+        await Future.delayed(const Duration(milliseconds: 300));
+        
+        // Call the callback if provided
+        if (widget.onLoginSuccess != null) {
+          print('Calling onLoginSuccess callback');
+          widget.onLoginSuccess!();
+        } else {
+          print('ERROR: No callback provided! Using direct navigation');
+          // Direct navigation as fallback
+          await _navigateToDashboardDirectly();
+        }
       }
     } on FirebaseAuthException catch (e) {
-      String message = e.message ?? loc.authenticationError ?? 'Authentication error';
+      print('Login error: ${e.code} - ${e.message}');
+      String message = e.message ?? loc.authenticationError;
 
       switch (e.code) {
         case 'user-not-found':
-          message = loc.userNotFound ?? 'No account found with this email.';
+          message = loc.userNotFound;
           break;
         case 'wrong-password':
-          message = loc.wrongPassword ?? 'Incorrect password.';
+          message = loc.wrongPassword;
           break;
         case 'invalid-email':
-          message = loc.invalidEmail ?? 'Invalid email format.';
+          message = loc.invalidEmail;
           break;
         case 'user-disabled':
-          message = loc.accountDisabled ?? 'This account has been disabled.';
+          message = loc.accountDisabled;
           break;
         case 'too-many-requests':
-          message =  'Too many attempts. Try again later.';
+          message = 'Too many attempts. Try again later.';
           break;
       }
 
@@ -80,13 +105,51 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _errorMessage = message);
       }
     } catch (e) {
+      print('Unexpected error: $e');
       if (mounted) {
-        setState(() => _errorMessage = loc.unexpectedError ?? 'Something went wrong. Please try again.');
+        setState(() => _errorMessage = loc.unexpectedError);
       }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  // Direct navigation method as fallback
+  Future<void> _navigateToDashboardDirectly() async {
+    try {
+      // Get user role
+      final role = await AuthService.getUserRole();
+      print('Direct navigation - User role: $role');
+      
+      // Navigate based on role
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) {
+              switch (role.toLowerCase().trim()) {
+                case 'driver':
+                  return const DriverDashboard();
+                case 'station':
+                  return const StationDashboard();
+                default:
+                  return const UserDashboard();
+              }
+            },
+          ),
+        );
+      });
+    } catch (e) {
+      print('Error in direct navigation: $e');
+      // Fallback to user dashboard
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => const UserDashboard(),
+          ),
+        );
+      });
     }
   }
 
@@ -105,12 +168,12 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const Icon(
                   Icons.local_gas_station,
-                  size: 80,
+                  size: 150,
                   color: Colors.blue,
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  loc.appName ?? 'Gas Station ET',
+                  loc.appName,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -118,7 +181,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  loc.welcomeBack ?? 'Welcome back!',
+                  loc.welcomeBack,
                   style: Theme.of(context).textTheme.titleMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -129,7 +192,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   autocorrect: false,
                   textInputAction: TextInputAction.next,
                   decoration: InputDecoration(
-                    labelText: loc.email ?? 'Email',
+                    labelText: loc.email,
                     prefixIcon: const Icon(Icons.email_outlined),
                     border: const OutlineInputBorder(),
                   ),
@@ -141,7 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   textInputAction: TextInputAction.done,
                   onSubmitted: (_) => _signIn(),
                   decoration: InputDecoration(
-                    labelText: loc.password ?? 'Password',
+                    labelText: loc.password,
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       icon: Icon(
@@ -175,7 +238,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     onPressed: _signIn,
                     child: Text(
-                      loc.login ?? 'Login',
+                      loc.login,
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -183,16 +246,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextButton(
                   onPressed: () {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(loc.forgotPasswordComingSoon ?? 'Forgot password feature coming soon')),
+                      SnackBar(content: Text(loc.forgotPasswordComingSoon)),
                     );
                   },
-                  child: Text(loc.forgotPassword ?? 'Forgot password?'),
+                  child: Text(loc.forgotPassword),
                 ),
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(loc.dontHaveAccount ?? "Don't have an account? "),
+                    Text(loc.dontHaveAccount),
                     TextButton(
                       onPressed: () {
                         Navigator.push(
@@ -201,7 +264,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         );
                       },
                       child: Text(
-                        loc.signUp ?? 'Sign up',
+                        loc.signUp,
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),

@@ -33,7 +33,7 @@ class _DriverEditProfilePageState extends State<DriverEditProfilePage> {
   Future<void> _loadCurrentData() async {
     try {
       final email = await AuthService.getCurrentEmail();
-      if (email == null || email.isEmpty) return;
+      if (email.isEmpty) return;
 
       final snapshot = await FirebaseFirestore.instance
           .collection('users')
@@ -61,7 +61,6 @@ class _DriverEditProfilePageState extends State<DriverEditProfilePage> {
 
     try {
       final email = await AuthService.getCurrentEmail();
-      if (email == null) throw Exception('No authenticated user');
 
       final query = await FirebaseFirestore.instance
           .collection('users')

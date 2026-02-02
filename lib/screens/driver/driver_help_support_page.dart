@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-class StationHelpSupportPage extends StatelessWidget {
-  const StationHelpSupportPage({Key? key}) : super(key: key);
+class DriverHelpSupportPage extends StatelessWidget {
+  const DriverHelpSupportPage({Key? key}) : super(key: key);
 
   Future<void> _launchUrl(String url) async {
     final uri = Uri.parse(url);
@@ -14,7 +14,7 @@ class StationHelpSupportPage extends StatelessWidget {
   }
 
   Future<void> _launchEmail(String email) async {
-    final uri = Uri.parse('mailto:$email?subject=Station Support Request');
+    final uri = Uri.parse('mailto:$email');
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
@@ -46,41 +46,36 @@ class StationHelpSupportPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Station Management Help Section
-            _buildSectionHeader('Station Management Help'),
+            // Help Center Section
+            _buildSectionHeader('Help Center'),
             Card(
               child: Column(
                 children: [
                   _buildHelpOption(
-                    icon: Icons.inventory,
-                    title: 'Inventory Management',
-                    subtitle: 'How to manage fuel inventory and stock',
+                    icon: Icons.question_answer,
+                    title: 'FAQs',
+                    subtitle: 'Frequently Asked Questions',
                     onTap: () {
-                      _launchUrl('https://example.com/station-inventory-guide');
+                      // Navigate to FAQ page
+                      // Navigator.push(context, MaterialPageRoute(builder: (context) => FAQPage()));
                     },
                   ),
                   _buildHelpOption(
-                    icon: Icons.schedule,
-                    title: 'Pre-order Management',
-                    subtitle: 'Handling customer pre-orders',
+                    icon: Icons.book,
+                    title: 'User Guide',
+                    subtitle: 'How to use the Driver App',
                     onTap: () {
-                      _launchUrl('https://example.com/preorder-management');
+                      // Open PDF guide or web page
+                      _launchUrl('https://example.com/driver-guide');
                     },
                   ),
                   _buildHelpOption(
-                    icon: Icons.attach_money,
-                    title: 'Pricing & Payments',
-                    subtitle: 'Setting prices and managing payments',
+                    icon: Icons.video_library,
+                    title: 'Video Tutorials',
+                    subtitle: 'Watch step-by-step guides',
                     onTap: () {
-                      _launchUrl('https://example.com/station-pricing-guide');
-                    },
-                  ),
-                  _buildHelpOption(
-                    icon: Icons.delivery_dining,
-                    title: 'Driver Management',
-                    subtitle: 'Working with delivery drivers',
-                    onTap: () {
-                      _launchUrl('https://example.com/driver-management');
+                      // Navigate to video tutorials
+                      _launchUrl('https://example.com/driver-tutorials');
                     },
                   ),
                 ],
@@ -96,32 +91,34 @@ class StationHelpSupportPage extends StatelessWidget {
                 children: [
                   _buildContactOption(
                     icon: Icons.chat,
-                    title: '24/7 Support Chat',
-                    subtitle: 'Instant chat with support team',
+                    title: 'Live Chat',
+                    subtitle: 'Chat with support agent',
                     onTap: () {
                       // Open live chat
                       // Navigator.push(context, MaterialPageRoute(builder: (context) => LiveChatPage()));
                     },
-                    badgeText: '24/7',
+                    badgeText: 'Online',
                     badgeColor: Colors.green,
                   ),
                   _buildContactOption(
                     icon: Icons.email,
                     title: 'Email Support',
-                    subtitle: 'station-support@fuelapp.com',
-                    onTap: () => _launchEmail('station-support@fuelapp.com'),
+                    subtitle: 'support@driverapp.com',
+                    onTap: () => _launchEmail('support@driverapp.com'),
                   ),
                   _buildContactOption(
                     icon: Icons.phone,
-                    title: 'Business Support',
-                    subtitle: '+1 (555) 987-6543',
-                    onTap: () => _makePhoneCall('+15559876543'),
+                    title: 'Phone Support',
+                    subtitle: '+1 (555) 123-4567',
+                    onTap: () => _makePhoneCall('+15551234567'),
                   ),
                   _buildContactOption(
-                    icon: Icons.business,
-                    title: 'Account Manager',
-                    subtitle: 'Dedicated station account manager',
-                    onTap: () => _launchEmail('account-manager@fuelapp.com'),
+                    icon: Icons.forum,
+                    title: 'Community Forum',
+                    subtitle: 'Connect with other drivers',
+                    onTap: () {
+                      _launchUrl('https://example.com/driver-forum');
+                    },
                   ),
                 ],
               ),
@@ -129,47 +126,25 @@ class StationHelpSupportPage extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            // Technical Issues Section
-            _buildSectionHeader('Technical Issues'),
+            // Troubleshooting Section
+            _buildSectionHeader('Troubleshooting'),
             Card(
               child: Column(
                 children: [
                   _buildTroubleshootOption(
-                    title: 'App Connectivity',
-                    description: 'Issues connecting to the server',
-                    steps: [
-                      'Check internet connection',
-                      'Restart the app',
-                      'Update to latest version',
-                      'Clear app cache'
-                    ],
+                    title: 'App Not Working',
+                    description: 'Check your internet connection and try restarting the app',
+                    steps: ['Restart the app', 'Check internet', 'Update app to latest version'],
                   ),
                   _buildTroubleshootOption(
-                    title: 'Payment Processing',
-                    description: 'Problems with payment transactions',
-                    steps: [
-                      'Verify payment gateway',
-                      'Check transaction logs',
-                      'Contact support if issue persists'
-                    ],
+                    title: 'GPS Issues',
+                    description: 'Ensure location services are enabled',
+                    steps: ['Enable GPS', 'Check permissions', 'Restart device'],
                   ),
                   _buildTroubleshootOption(
-                    title: 'Inventory Sync Issues',
-                    description: 'Fuel levels not updating properly',
-                    steps: [
-                      'Check network connection',
-                      'Manually sync inventory',
-                      'Contact technical support'
-                    ],
-                  ),
-                  _buildTroubleshootOption(
-                    title: 'Driver App Issues',
-                    description: 'Problems with driver connections',
-                    steps: [
-                      'Check driver app status',
-                      'Verify driver credentials',
-                      'Reset driver connections'
-                    ],
+                    title: 'Payment Problems',
+                    description: 'Issues with payments or earnings',
+                    steps: ['Check payment settings', 'Verify bank details', 'Contact support'],
                   ),
                 ],
               ),
@@ -177,62 +152,16 @@ class StationHelpSupportPage extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            // Business Resources Section
-            _buildSectionHeader('Business Resources'),
-            Card(
-              child: Column(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.bar_chart, color: Colors.purple),
-                    title: const Text('Analytics Guide'),
-                    subtitle: const Text('Understanding station analytics'),
-                    onTap: () {
-                      _launchUrl('https://example.com/station-analytics-guide');
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.trending_up, color: Colors.green),
-                    title: const Text('Growth Strategies'),
-                    subtitle: const Text('Tips to grow your station business'),
-                    onTap: () {
-                      _launchUrl('https://example.com/station-growth');
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.group, color: Colors.blue),
-                    title: const Text('Customer Retention'),
-                    subtitle: const Text('Keeping customers coming back'),
-                    onTap: () {
-                      _launchUrl('https://example.com/customer-retention');
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.security, color: Colors.orange),
-                    title: const Text('Safety Guidelines'),
-                    subtitle: const Text('Station safety protocols'),
-                    onTap: () {
-                      _launchUrl('https://example.com/station-safety');
-                    },
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Legal & Compliance Section
-            _buildSectionHeader('Legal & Compliance'),
+            // Legal Section
+            _buildSectionHeader('Legal'),
             Card(
               child: Column(
                 children: [
                   ListTile(
                     leading: const Icon(Icons.description, color: Colors.grey),
-                    title: const Text('Station Agreement'),
+                    title: const Text('Terms of Service'),
                     onTap: () {
-                      _launchUrl('https://example.com/station-agreement');
+                      _launchUrl('https://example.com/terms');
                     },
                   ),
                   const Divider(height: 1),
@@ -240,23 +169,15 @@ class StationHelpSupportPage extends StatelessWidget {
                     leading: const Icon(Icons.privacy_tip, color: Colors.grey),
                     title: const Text('Privacy Policy'),
                     onTap: () {
-                      _launchUrl('https://example.com/privacy-policy');
+                      _launchUrl('https://example.com/privacy');
                     },
                   ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.gavel, color: Colors.grey),
-                    title: const Text('Terms of Service'),
+                    title: const Text('Driver Agreement'),
                     onTap: () {
-                      _launchUrl('https://example.com/terms-of-service');
-                    },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.assignment, color: Colors.grey),
-                    title: const Text('Compliance Documents'),
-                    onTap: () {
-                      _launchUrl('https://example.com/compliance-docs');
+                      _launchUrl('https://example.com/driver-agreement');
                     },
                   ),
                 ],
@@ -266,7 +187,7 @@ class StationHelpSupportPage extends StatelessWidget {
             const SizedBox(height: 24),
 
             // About App Section
-            _buildSectionHeader('About Station App'),
+            _buildSectionHeader('About'),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -279,11 +200,11 @@ class StationHelpSupportPage extends StatelessWidget {
                           width: 50,
                           height: 50,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF256af4),
+                            color: Colors.blue,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Icon(
-                            Icons.local_gas_station,
+                            Icons.drive_eta,
                             color: Colors.white,
                             size: 30,
                           ),
@@ -294,14 +215,14 @@ class StationHelpSupportPage extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
-                                'Station Management App',
+                                'Driver App',
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                               Text(
-                                'Version 3.2.1 • Build 321',
+                                'Version 2.1.0 • Build 210',
                                 style: TextStyle(
                                   color: Colors.grey[600],
                                 ),
@@ -313,9 +234,9 @@ class StationHelpSupportPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      'The Station App helps fuel station owners manage their business efficiently. '
-                      'Track inventory, handle pre-orders, manage drivers, and analyze station performance '
-                      'all from one platform.',
+                      'The Driver App helps delivery drivers connect with gas stations '
+                      'for efficient fuel delivery services. Manage your deliveries, '
+                      'track earnings, and find nearby stations all in one place.',
                       style: TextStyle(
                         color: Colors.grey[700],
                         height: 1.5,
@@ -350,38 +271,6 @@ class StationHelpSupportPage extends StatelessWidget {
             ),
 
             const SizedBox(height: 32),
-
-            // Quick Action Buttons
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.feedback),
-                    label: const Text('Send Feedback'),
-                    onPressed: () => _launchEmail('feedback@fuelapp.com'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.rate_review),
-                    label: const Text('Rate App'),
-                    onPressed: () {
-                      // Launch app store
-                      // _launchAppStore();
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 32),
           ],
         ),
       ),
@@ -398,7 +287,7 @@ class StationHelpSupportPage extends StatelessWidget {
           fontWeight: FontWeight.bold,
           color: Colors.blueGrey,
         ),
-      )
+      ),
     );
   }
 

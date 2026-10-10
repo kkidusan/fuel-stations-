@@ -338,13 +338,14 @@ class _StationProfilePageState extends State<StationProfilePage> {
     final colorScheme = theme.colorScheme;
 
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        appBar: _buildAppBar(),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
-      
+      appBar: _buildAppBar(),
       body: RefreshIndicator(
         onRefresh: _loadStationData,
         child: SingleChildScrollView(
@@ -442,6 +443,20 @@ class _StationProfilePageState extends State<StationProfilePage> {
     );
   }
 
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: const Text('Station Profile'),
+      // Explicit back arrow (pops back to the station dashboard).
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        tooltip: 'Back',
+        onPressed: () => Navigator.of(context).maybePop(),
+      ),
+    );
+  }
+
+  /// One property line: icon + key label + value, all on the SAME row
+  /// (inline), e.g.  🏢  Name   Bole Fuel Station
   Widget _CompactInfoRow(IconData icon, String label, String value) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -453,24 +468,24 @@ class _StationProfilePageState extends State<StationProfilePage> {
         children: [
           Icon(icon, size: 20, color: colorScheme.primary),
           const SizedBox(width: 12),
+          // Key (label) — fixed width so every value aligns in a column.
+          SizedBox(
+            width: 92,
+            child: Text(
+              label,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Value — shown inline, on the same line as the label.
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+            child: Text(
+              value,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ],

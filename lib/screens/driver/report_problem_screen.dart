@@ -1,6 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../services/api_client.dart';
+import '../../services/app_api.dart';
 
 class ReportProblemScreen extends StatefulWidget {
   const ReportProblemScreen({super.key});
@@ -35,19 +36,18 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
 
   Future<void> _loadStations() async {
     try {
-      final query = await FirebaseFirestore.instance
-          .collection('users')
-          .where('role', isEqualTo: 'station')
-          .get();
+      final rows = await AppApi.stations(order: 'name', activeOnly: true);
 
       if (mounted) {
         setState(() {
-          _stations = query.docs.map((doc) {
-            final data = doc.data();
+          _stations = rows.map((row) {
+            final name = (row['display_name'] as String?)?.trim() ??
+                (row['name'] as String?)?.trim() ??
+                'Unknown Station';
             return {
-              'id': doc.id,
-              'name': data['stationName']?.toString() ?? 'Unknown Station',
-              'address': data['address']?.toString() ?? '',
+              'id': (row['uid'] as String?)?.trim() ?? '',
+              'name': name.isNotEmpty ? name : 'Unknown Station',
+              'address': (row['address'] as String?)?.trim() ?? '',
             };
           }).toList();
         });
@@ -71,34 +71,12 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception('No user logged in');
-
-      await FirebaseFirestore.instance
-          .collection('problem_reports')
-          .add({
-            'userId': user.uid,
-            'userEmail': user.email,
-            'stationId': _selectedStationId,
-            'stationName': _selectedStationName,
-            'problemType': _problemType,
-            'description': _descriptionController.text.trim(),
-            'status': 'pending',
-            'reportedAt': FieldValue.serverTimestamp(),
-            'resolved': false,
-          });
-
-      // Notify station owner (optional - could use cloud functions)
-      await FirebaseFirestore.instance
-          .collection('notifications')
-          .add({
-            'userId': _selectedStationId,
-            'title': 'New Problem Report',
-            'message': 'A driver reported: $_problemType',
-            'type': 'problem_report',
-            'read': false,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
+      await AppApi.submitProblemReport(
+        stationId: _selectedStationId,
+        stationName: _selectedStationName,
+        problemType: _problemType!,
+        description: _descriptionController.text.trim(),
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -108,6 +86,15 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
           ),
         );
         Navigator.pop(context);
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

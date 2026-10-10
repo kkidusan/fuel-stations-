@@ -1,6 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../services/api_client.dart';
+import '../../services/app_api.dart';
+import '../../services/auth_user_service.dart';
+import '../../widgets/phone_input.dart';
 
 class UnionApplicationScreen extends StatefulWidget {
   const UnionApplicationScreen({super.key});
@@ -12,7 +15,7 @@ class UnionApplicationScreen extends StatefulWidget {
 class _UnionApplicationScreenState extends State<UnionApplicationScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
-  final _phoneController = TextEditingController();
+  final _phone = PhoneController();
   final _licenseNumberController = TextEditingController();
   final _plateNumberController = TextEditingController();
   final _experienceController = TextEditingController();
@@ -28,28 +31,21 @@ class _UnionApplicationScreenState extends State<UnionApplicationScreen> {
   }
 
   Future<void> _checkApplicationStatus() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    try {
+      final app = await AppApi.myUnionApplication();
+      if (app == null || !mounted) return;
 
-    final query = await FirebaseFirestore.instance
-        .collection('union_applications')
-        .where('userId', isEqualTo: user.uid)
-        .limit(1)
-        .get();
-
-    if (query.docs.isNotEmpty) {
-      final data = query.docs.first.data();
-      if (mounted) {
-        setState(() {
-          _hasApplied = true;
-          _nameController.text = data['name']?.toString() ?? '';
-          _phoneController.text = data['phone']?.toString() ?? '';
-          _licenseNumberController.text = data['licenseNumber']?.toString() ?? '';
-          _plateNumberController.text = data['plateNumber']?.toString() ?? '';
-          _experienceController.text = data['experience']?.toString() ?? '';
-          _reasonController.text = data['reason']?.toString() ?? '';
-        });
-      }
+      setState(() {
+        _hasApplied = true;
+        _nameController.text = app['name']?.toString() ?? '';
+        _phone.setFromStored(app['phone']?.toString());
+        _licenseNumberController.text = app['license_number']?.toString() ?? '';
+        _plateNumberController.text = app['plate_number']?.toString() ?? '';
+        _experienceController.text = app['experience']?.toString() ?? '';
+        _reasonController.text = app['reason']?.toString() ?? '';
+      });
+    } catch (e) {
+      debugPrint('Error checking union application: $e');
     }
   }
 
@@ -59,34 +55,18 @@ class _UnionApplicationScreenState extends State<UnionApplicationScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService.currentUser;
       if (user == null) throw Exception('No user logged in');
 
-      await FirebaseFirestore.instance
-          .collection('union_applications')
-          .doc(user.uid)
-          .set({
-            'userId': user.uid,
-            'name': _nameController.text.trim(),
-            'phone': _phoneController.text.trim(),
-            'licenseNumber': _licenseNumberController.text.trim(),
-            'plateNumber': _plateNumberController.text.trim(),
-            'experience': _experienceController.text.trim(),
-            'reason': _reasonController.text.trim(),
-            'status': 'pending',
-            'isUnionMember': false,
-            'appliedAt': FieldValue.serverTimestamp(),
-            'email': user.email,
-          }, SetOptions(merge: true));
-
-      // Update user document with union status
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .update({
-            'unionStatus': 'pending',
-            'isUnionMember': false,
-          });
+      await AppApi.submitUnionApplication({
+        'email': user.email,
+        'name': _nameController.text.trim(),
+        'phone': _phone.fullPhone,
+        'license_number': _licenseNumberController.text.trim(),
+        'plate_number': _plateNumberController.text.trim(),
+        'experience': _experienceController.text.trim(),
+        'reason': _reasonController.text.trim(),
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -96,6 +76,15 @@ class _UnionApplicationScreenState extends State<UnionApplicationScreen> {
           ),
         );
         setState(() => _hasApplied = true);
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -165,19 +154,10 @@ class _UnionApplicationScreenState extends State<UnionApplicationScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                TextFormField(
-                  controller: _phoneController,
-                  decoration: const InputDecoration(
-                    labelText: 'Phone Number',
-                    prefixIcon: Icon(Icons.phone),
-                  ),
-                  keyboardType: TextInputType.phone,
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Please enter your phone number';
-                    }
-                    return null;
-                  },
+                PhoneField(
+                  controller: _phone,
+                  label: 'Phone Number',
+                  hint: '9xx xxx xxx',
                 ),
                 const SizedBox(height: 16),
 
@@ -267,7 +247,7 @@ class _UnionApplicationScreenState extends State<UnionApplicationScreen> {
   @override
   void dispose() {
     _nameController.dispose();
-    _phoneController.dispose();
+    _phone.dispose();
     _licenseNumberController.dispose();
     _plateNumberController.dispose();
     _experienceController.dispose();

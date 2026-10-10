@@ -1,6 +1,10 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../constants/app_enums.dart';
+import '../../services/api_client.dart';
+import '../../services/app_api.dart';
+import '../../services/auth_user_service.dart';
+import '../../widgets/phone_input.dart';
 
 class StationManagePage extends StatefulWidget {
   const StationManagePage({super.key});
@@ -12,7 +16,7 @@ class StationManagePage extends StatefulWidget {
 class _StationManagePageState extends State<StationManagePage> {
   final _nameController = TextEditingController();
   final _addressController = TextEditingController();
-  final _phoneController = TextEditingController();
+  final _phone = PhoneController();
   final _descriptionController = TextEditingController();
   final _newFuelTypeController = TextEditingController();
   final _announcementController = TextEditingController();
@@ -41,18 +45,8 @@ class _StationManagePageState extends State<StationManagePage> {
   List<Map<String, dynamic>> _announcements = [];
   List<Map<String, dynamic>> _reports = [];
   
-  // Common fuel types for dropdown
-  final List<String> _commonFuelTypes = [
-    'Diesel',
-    'Petrol (Regular)',
-    'Petrol (Premium)',
-    'CNG',
-    'LPG',
-    'Electric',
-    'Bio-Diesel',
-    'Kerosene',
-    'Aviation Fuel',
-  ];
+  // Common fuel types for dropdown (canonical values — see app_enums.dart)
+  final List<String> _commonFuelTypes = kFuelTypes;
 
   @override
   void initState() {
@@ -64,7 +58,7 @@ class _StationManagePageState extends State<StationManagePage> {
   void dispose() {
     _nameController.dispose();
     _addressController.dispose();
-    _phoneController.dispose();
+    _phone.dispose();
     _descriptionController.dispose();
     _newFuelTypeController.dispose();
     _announcementController.dispose();
@@ -76,31 +70,24 @@ class _StationManagePageState extends State<StationManagePage> {
     setState(() => _isLoading = true);
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService.currentUser;
       if (user == null) return;
 
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (userDoc.exists) {
-        final data = userDoc.data() as Map<String, dynamic>;
-        setState(() {
-          _stationAutoId = data['autoID']?.toString(); // Get autoID
-          _nameController.text = data['name']?.toString() ?? '';
-          _addressController.text = data['address']?.toString() ?? '';
-          _phoneController.text = data['phone']?.toString() ?? '';
-          _descriptionController.text = data['description']?.toString() ?? '';
-          _isStationOpen = data['isOpen'] ?? true;
-          _availableFuelTypes = List<String>.from(data['fuelTypes'] ?? []);
-        });
+      final row = user.row;
+      setState(() {
+        _stationAutoId = (row['auto_id'] ?? row['station_id'])?.toString();
+        _nameController.text = row['display_name']?.toString() ?? '';
+        _addressController.text = row['address']?.toString() ?? '';
+        _phone.setFromStored(row['phone']?.toString());
+        _descriptionController.text = row['description']?.toString() ?? '';
+        _isStationOpen = row['is_open'] ?? true;
+        _availableFuelTypes = List<String>.from(row['fuel_types'] ?? []);
+      });
         
-        if (_stationAutoId != null) {
-          await _loadFuelInventory();
-          await _loadAnnouncements();
-          await _loadReports();
-        }
+      if (_stationAutoId != null) {
+        await _loadFuelInventory();
+        await _loadAnnouncements();
+        await _loadReports();
       }
     } catch (e) {
       debugPrint('Error loading station data: $e');
@@ -120,14 +107,11 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('fuel_inventory')
-          .doc(_stationAutoId!) // Use autoID as document ID
-          .get();
+      final doc = await AppApi.stationInventory(_stationAutoId!);
       
-      if (doc.exists) {
+      if (doc != null) {
         setState(() {
-          _fuelInventoryData = doc.data();
+          _fuelInventoryData = doc;
         });
       }
     } catch (e) {
@@ -139,17 +123,10 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('announcements')
-          .doc(_stationAutoId!) // Use autoID as document ID
-          .get();
-      
-      if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
-        setState(() {
-          _announcements = List<Map<String, dynamic>>.from(data['announcements'] ?? []);
-        });
-      }
+      final data = await AppApi.announcements(_stationAutoId!);
+      setState(() {
+        _announcements = List<Map<String, dynamic>>.from(data);
+      });
     } catch (e) {
       debugPrint('Error loading announcements: $e');
     }
@@ -159,17 +136,10 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('reports')
-          .doc(_stationAutoId!) // Use autoID as document ID
-          .get();
-      
-      if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
-        setState(() {
-          _reports = List<Map<String, dynamic>>.from(data['reports'] ?? []);
-        });
-      }
+      final data = await AppApi.reports(_stationAutoId!);
+      setState(() {
+        _reports = List<Map<String, dynamic>>.from(data);
+      });
     } catch (e) {
       debugPrint('Error loading reports: $e');
     }
@@ -183,30 +153,32 @@ class _StationManagePageState extends State<StationManagePage> {
       );
       return;
     }
-    
+
+    if (_phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A phone number is required')),
+      );
+      return;
+    }
+
     setState(() => _isSavingStationInfo = true);
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      final updateData = {
-        'name': _nameController.text.trim(),
+      // Save to the signed-in user's profile row (snake_case)
+      final res = await AppApi.updateProfile({
+        'display_name': _nameController.text.trim(),
         'address': _addressController.text.trim(),
-        'phone': _phoneController.text.trim(),
+        'phone': _phone.fullPhone,
         'description': _descriptionController.text.trim(),
-        'isOpen': _isStationOpen,
-        'fuelTypes': _availableFuelTypes,
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
+        'is_open': _isStationOpen,
+        'fuel_types': _availableFuelTypes,
+      });
+      final updatedRow = res['user'];
+      if (updatedRow is Map<String, dynamic>) {
+        AuthService.updateCachedUser(updatedRow);
+      }
 
-      // Save to current user's document
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .update(updateData);
-
-      // Update fuel inventory in separate collection using autoID
+      // Update fuel inventory in the station inventory doc using autoID
       await _updateFuelInventoryWithTypes();
 
       if (mounted) {
@@ -214,6 +186,16 @@ class _StationManagePageState extends State<StationManagePage> {
           const SnackBar(
             content: Text('Station information saved successfully!'),
             backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } on ApiException catch (e) {
+      debugPrint('Error saving station info: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving: ${e.message}'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -238,8 +220,12 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
+      // READ the latest inventory doc (fall back to local state)
       Map<String, dynamic> fuels = {};
-      if (_fuelInventoryData != null && _fuelInventoryData!['fuels'] != null) {
+      final doc = await AppApi.stationInventory(_stationAutoId!);
+      if (doc != null && doc['fuels'] != null) {
+        fuels = Map<String, dynamic>.from(doc['fuels']);
+      } else if (_fuelInventoryData != null && _fuelInventoryData!['fuels'] != null) {
         fuels = Map<String, dynamic>.from(_fuelInventoryData!['fuels']);
       }
       
@@ -262,16 +248,12 @@ class _StationManagePageState extends State<StationManagePage> {
         fuels.remove(fuelType);
       }
       
-      // Update fuel inventory in separate collection using autoID
-      await FirebaseFirestore.instance
-          .collection('fuel_inventory')
-          .doc(_stationAutoId!) // Use autoID
-          .set({
-            'stationId': _stationAutoId, // Store autoID as stationId field
-            'autoID': _stationAutoId, // Also store as autoID field
-            'fuels': fuels,
-            'updatedAt': DateTime.now().toIso8601String(),
-          }, SetOptions(merge: true));
+      // Update fuel inventory doc (PUT replaces the whole fuels map)
+      await AppApi.saveStationInventory({
+        'station_key': _stationAutoId,
+        'station_id': _stationAutoId,
+        'fuels': fuels,
+      });
       
       await _loadFuelInventory();
     } catch (e) {
@@ -301,7 +283,7 @@ class _StationManagePageState extends State<StationManagePage> {
                   items: _commonFuelTypes.map((type) {
                     return DropdownMenuItem(
                       value: type,
-                      child: Text(type),
+                      child: Text(fuelTypeLabel(type)),
                     );
                   }).toList(),
                   onChanged: (value) {
@@ -370,32 +352,41 @@ class _StationManagePageState extends State<StationManagePage> {
   }
 
   Future<void> _addFuelType(String fuelType) async {
-    if (!_availableFuelTypes.contains(fuelType)) {
-      setState(() {
-        _availableFuelTypes.add(fuelType);
-      });
-      _newFuelTypeController.clear();
-      
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        // Update fuel types in user document
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .update({
-              'fuelTypes': _availableFuelTypes,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-        
-        // Add to fuel inventory in separate collection using autoID
-        await _addToFuelInventory(fuelType);
+    // Store/send the canonical value; keep the typed label for the toast.
+    final canonical = normalizeFuelType(fuelType) ?? fuelType;
+    if (_availableFuelTypes.contains(canonical)) return;
+
+    setState(() {
+      _availableFuelTypes.add(canonical);
+    });
+    _newFuelTypeController.clear();
+
+    try {
+      // Update fuel types on the user profile row (snake_case)
+      final res = await AppApi.updateProfile({'fuel_types': _availableFuelTypes});
+      final updatedRow = res['user'];
+      if (updatedRow is Map<String, dynamic>) {
+        AuthService.updateCachedUser(updatedRow);
       }
-      
+
+      // Add to fuel inventory doc using autoID
+      await _addToFuelInventory(canonical);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('$fuelType added to available fuels'),
+            content: Text('${fuelTypeLabel(canonical)} added to available fuels'),
             backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error adding fuel type: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error adding fuel type: ${e.toString()}'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -406,21 +397,29 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
-      await FirebaseFirestore.instance
-          .collection('fuel_inventory')
-          .doc(_stationAutoId!) // Use autoID
-          .set({
-            'fuels.$fuelType': {
-              'currentStock': 0.0,
-              'maxCapacity': 10000.0,
-              'pricePerLiter': 0.0,
-              'status': 'available',
-              'lastRefill': DateTime.now().toIso8601String(),
-            },
-            'stationId': _stationAutoId, // Store autoID as stationId
-            'autoID': _stationAutoId, // Also store as autoID
-            'updatedAt': DateTime.now().toIso8601String(),
-          }, SetOptions(merge: true));
+      // READ the latest inventory (fall back to a fresh map)
+      Map<String, dynamic> fuels = {};
+      final doc = await AppApi.stationInventory(_stationAutoId!);
+      if (doc != null && doc['fuels'] != null) {
+        fuels = Map<String, dynamic>.from(doc['fuels']);
+      }
+      
+      if (!fuels.containsKey(fuelType)) {
+        fuels[fuelType] = {
+          'currentStock': 0.0,
+          'maxCapacity': 10000.0,
+          'pricePerLiter': 0.0,
+          'status': 'available',
+          'lastRefill': DateTime.now().toIso8601String(),
+        };
+      }
+      
+      // PUT replaces the whole fuels map (merge upsert)
+      await AppApi.saveStationInventory({
+        'station_key': _stationAutoId,
+        'station_id': _stationAutoId,
+        'fuels': fuels,
+      });
       
       await _loadFuelInventory();
     } catch (e) {
@@ -434,25 +433,27 @@ class _StationManagePageState extends State<StationManagePage> {
     });
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        // Update fuel types in user document
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .update({
-              'fuelTypes': _availableFuelTypes,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+      // Update fuel types on the user profile row
+      final res = await AppApi.updateProfile({'fuel_types': _availableFuelTypes});
+      final updatedRow = res['user'];
+      if (updatedRow is Map<String, dynamic>) {
+        AuthService.updateCachedUser(updatedRow);
+      }
+      
+      // Remove from fuel inventory doc (read-modify-write)
+      if (_stationAutoId != null) {
+        Map<String, dynamic> fuels = {};
+        final doc = await AppApi.stationInventory(_stationAutoId!);
+        if (doc != null && doc['fuels'] != null) {
+          fuels = Map<String, dynamic>.from(doc['fuels']);
+        }
+        fuels.remove(fuelType);
         
-        // Remove from fuel inventory in separate collection using autoID
-        await FirebaseFirestore.instance
-            .collection('fuel_inventory')
-            .doc(_stationAutoId!) // Use autoID
-            .update({
-              'fuels.$fuelType': FieldValue.delete(),
-              'updatedAt': DateTime.now().toIso8601String(),
-            });
+        await AppApi.saveStationInventory({
+          'station_key': _stationAutoId,
+          'station_id': _stationAutoId,
+          'fuels': fuels,
+        });
         
         await _loadFuelInventory();
       }
@@ -498,14 +499,34 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
-      await FirebaseFirestore.instance
-          .collection('fuel_inventory')
-          .doc(_stationAutoId!) // Use autoID
-          .update({
-            'fuels.$fuelType.currentStock': newStock,
-            'fuels.$fuelType.lastRefill': DateTime.now().toIso8601String(),
-            'updatedAt': DateTime.now().toIso8601String(),
-          });
+      // READ the latest inventory, update the entry, PUT the whole map
+      Map<String, dynamic> fuels = {};
+      final doc = await AppApi.stationInventory(_stationAutoId!);
+      if (doc != null && doc['fuels'] != null) {
+        fuels = Map<String, dynamic>.from(doc['fuels']);
+      } else if (_fuelInventoryData != null && _fuelInventoryData!['fuels'] != null) {
+        fuels = Map<String, dynamic>.from(_fuelInventoryData!['fuels']);
+      }
+      
+      final entry = fuels[fuelType];
+      if (entry is Map<String, dynamic>) {
+        entry['currentStock'] = newStock;
+        entry['lastRefill'] = DateTime.now().toIso8601String();
+      } else {
+        fuels[fuelType] = {
+          'currentStock': newStock,
+          'maxCapacity': 10000.0,
+          'pricePerLiter': 0.0,
+          'status': 'available',
+          'lastRefill': DateTime.now().toIso8601String(),
+        };
+      }
+      
+      await AppApi.saveStationInventory({
+        'station_key': _stationAutoId,
+        'station_id': _stationAutoId,
+        'fuels': fuels,
+      });
       
       await _loadFuelInventory();
       if (mounted) {
@@ -536,7 +557,7 @@ class _StationManagePageState extends State<StationManagePage> {
     setState(() => _isPostingAnnouncement = true);
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService.currentUser;
       if (user == null) return;
 
       final newAnnouncement = {
@@ -551,16 +572,10 @@ class _StationManagePageState extends State<StationManagePage> {
         'createdAt': DateTime.now().toIso8601String(),
       };
 
-      // Add announcement to array in announcements collection using autoID
-      await FirebaseFirestore.instance
-          .collection('announcements')
-          .doc(_stationAutoId!) // Use autoID as document ID
-          .set({
-            'announcements': FieldValue.arrayUnion([newAnnouncement]),
-            'stationId': _stationAutoId, // Store autoID as stationId
-            'autoID': _stationAutoId, // Also store as autoID
-            'updatedAt': DateTime.now().toIso8601String(),
-          }, SetOptions(merge: true));
+      // Add announcement to the doc array (read-modify-write)
+      final current = await AppApi.announcements(_stationAutoId!);
+      final updated = [...current, newAnnouncement];
+      await AppApi.saveAnnouncements(_stationAutoId!, updated);
       
       _announcementController.clear();
       await _loadAnnouncements();
@@ -570,6 +585,16 @@ class _StationManagePageState extends State<StationManagePage> {
           const SnackBar(
             content: Text('Announcement created successfully!'),
             backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } on ApiException catch (e) {
+      debugPrint('Error creating announcement: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.message}'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -605,7 +630,7 @@ class _StationManagePageState extends State<StationManagePage> {
     setState(() => _isSubmittingReport = true);
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService.currentUser;
       if (user == null) return;
 
       final newReport = {
@@ -621,16 +646,10 @@ class _StationManagePageState extends State<StationManagePage> {
         'createdAt': DateTime.now().toIso8601String(),
       };
 
-      // Add report to array in reports collection using autoID
-      await FirebaseFirestore.instance
-          .collection('reports')
-          .doc(_stationAutoId!) // Use autoID as document ID
-          .set({
-            'reports': FieldValue.arrayUnion([newReport]),
-            'stationId': _stationAutoId, // Store autoID as stationId
-            'autoID': _stationAutoId, // Also store as autoID
-            'updatedAt': DateTime.now().toIso8601String(),
-          }, SetOptions(merge: true));
+      // Add report to the doc array (read-modify-write)
+      final current = await AppApi.reports(_stationAutoId!);
+      final updated = [...current, newReport];
+      await AppApi.saveReports(_stationAutoId!, updated);
       
       _reportController.clear();
       await _loadReports();
@@ -640,6 +659,16 @@ class _StationManagePageState extends State<StationManagePage> {
           const SnackBar(
             content: Text('Report submitted to union successfully!'),
             backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } on ApiException catch (e) {
+      debugPrint('Error creating report: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.message}'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -664,7 +693,7 @@ class _StationManagePageState extends State<StationManagePage> {
     if (_stationAutoId == null) return;
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService.currentUser;
       if (user == null) return;
 
       final newAnnouncement = {
@@ -679,15 +708,10 @@ class _StationManagePageState extends State<StationManagePage> {
         'createdAt': DateTime.now().toIso8601String(),
       };
 
-      await FirebaseFirestore.instance
-          .collection('announcements')
-          .doc(_stationAutoId!) // Use autoID
-          .set({
-            'announcements': FieldValue.arrayUnion([newAnnouncement]),
-            'stationId': _stationAutoId, // Store autoID as stationId
-            'autoID': _stationAutoId, // Also store as autoID
-            'updatedAt': DateTime.now().toIso8601String(),
-          }, SetOptions(merge: true));
+      // Add announcement to the doc array (read-modify-write)
+      final current = await AppApi.announcements(_stationAutoId!);
+      final updated = [...current, newAnnouncement];
+      await AppApi.saveAnnouncements(_stationAutoId!, updated);
       
       await _loadAnnouncements();
       
@@ -739,7 +763,7 @@ class _StationManagePageState extends State<StationManagePage> {
       runSpacing: 8,
       children: _availableFuelTypes.map((fuelType) {
         return Chip(
-          label: Text(fuelType),
+          label: Text(fuelTypeLabel(fuelType)),
           backgroundColor: Colors.blue[50],
           deleteIcon: const Icon(Icons.close, size: 16),
           onDeleted: () => _removeFuelType(fuelType),
@@ -830,7 +854,7 @@ class _StationManagePageState extends State<StationManagePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              fuelType,
+                              fuelTypeLabel(fuelType),
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 15,
@@ -1250,16 +1274,12 @@ class _StationManagePageState extends State<StationManagePage> {
           maxLines: 2,
         ),
         const SizedBox(height: 16),
-        TextField(
-          controller: _phoneController,
-          decoration: const InputDecoration(
-            labelText: 'Phone Number',
-            prefixIcon: Icon(Icons.phone),
-            border: OutlineInputBorder(),
-            filled: true,
-            fillColor: Colors.white,
-          ),
-          keyboardType: TextInputType.phone,
+        PhoneField(
+          controller: _phone,
+          label: 'Phone Number',
+          hint: '9xx xxx xxx',
+          borderRadius: 4,
+          fillColor: Colors.white,
         ),
         const SizedBox(height: 16),
         TextField(

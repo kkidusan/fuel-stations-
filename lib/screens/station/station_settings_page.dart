@@ -2,24 +2,87 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '/providers/app_provider.dart';
 
+import '../../services/auth_user_service.dart';
+import '../auth/auth_wrapper.dart';
+import 'station_profile_page.dart';
+import 'station_inventory_page.dart';
+import 'station_help_support_page.dart';
+import 'station_manage_page.dart';
+
 class StationSettingsPage extends StatelessWidget {
-  const StationSettingsPage({Key? key}) : super(key: key);
+  const StationSettingsPage({Key? key, this.showAppBar = true})
+      : super(key: key);
+
+  /// When this page is embedded as a dashboard tab it must not render its
+  /// own AppBar/back button (the dashboard provides both).
+  final bool showAppBar;
+
+  Future<void> _openProfile(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const StationProfilePage()),
+    );
+  }
+
+  Future<void> _openInventory(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const StationInventoryPage()),
+    );
+  }
+
+  Future<void> _openHelpSupport(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const StationHelpSupportPage()),
+    );
+  }
+
+  Future<void> _openManageStation(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const StationManagePage()),
+    );
+  }
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to log out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Logout', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    await AuthService.signOut();
+    if (!context.mounted) return;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const AuthWrapper()),
+      (route) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: Consumer<AppProvider>(
+    final Widget content = Consumer<AppProvider>(
         builder: (context, provider, child) {
           return ListView(
             children: [
-              // Theme Settings Section
+              // ── Appearance ──────────────────────────────────────────
               _buildSectionHeader('Appearance'),
               Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -52,8 +115,8 @@ class StationSettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
-              
-              // Language Settings Section
+
+              // ── Language ────────────────────────────────────────────
               _buildSectionHeader('Language'),
               Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -100,8 +163,53 @@ class StationSettingsPage extends StatelessWidget {
                   ),
                 ),
               ),
-              
-              // Reset Section
+
+              // ── Account ─────────────────────────────────────────────
+              _buildSectionHeader('Account'),
+              Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.business_outlined,
+                          color: Colors.indigo),
+                      title: const Text('Manage Station'),
+                      subtitle: const Text('Prices, pumps, working hours...'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _openManageStation(context),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.person_outline,
+                          color: Colors.blue),
+                      title: const Text('Profile'),
+                      subtitle: const Text('View and edit station details'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _openProfile(context),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.inventory_2_outlined,
+                          color: Colors.teal),
+                      title: const Text('Inventory'),
+                      subtitle: const Text('Manage pumps and fuel stock'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _openInventory(context),
+                    ),
+                    const Divider(height: 1, indent: 56),
+                    ListTile(
+                      leading: const Icon(Icons.help_outline,
+                          color: Colors.green),
+                      title: const Text('Help & Support'),
+                      subtitle: const Text('Contact support and FAQs'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _openHelpSupport(context),
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Reset ───────────────────────────────────────────────
               Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: ListTile(
@@ -119,12 +227,42 @@ class StationSettingsPage extends StatelessWidget {
                   },
                 ),
               ),
-              
+
+              // ── Logout ──────────────────────────────────────────────
+              Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: ListTile(
+                  leading: const Icon(Icons.logout, color: Colors.red),
+                  title: const Text(
+                    'Logout',
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: const Text('Sign out of your account'),
+                  trailing: const Icon(Icons.chevron_right, color: Colors.red),
+                  onTap: () => _confirmLogout(context),
+                ),
+              ),
+
               const SizedBox(height: 32),
             ],
           );
         },
+      );
+
+    if (!showAppBar) return content;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
+      body: content,
     );
   }
 
@@ -150,14 +288,14 @@ class StationSettingsPage extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     final isSelected = currentCode == code;
-    
+
     return ListTile(
       leading: Icon(
         isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
         color: isSelected ? Theme.of(context).primaryColor : null,
       ),
       title: Text(name),
-      trailing: isSelected 
+      trailing: isSelected
           ? Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(

@@ -33,22 +33,14 @@ class AppLocalizations {
   // Auth related
   // ──────────────────────────────────────────────────────────────────────────
   String get login            => _current['login'] ?? 'Login';
-  String get signUp           => _current['signUp'] ?? 'Sign Up';
   String get email            => _current['email'] ?? 'Email';
   String get password         => _current['password'] ?? 'Password';
-  String get confirmPassword  => _current['confirmPassword'] ?? 'Confirm Password';
-  String get alreadyHave      => _current['alreadyHaveAccount'] ?? 'Already have an account? Login';
-  String get dontHaveAccount  => _current['dontHaveAccount'] ?? "Don't have an account?";
   String get forgotPassword   => _current['forgotPassword'] ?? 'Forgot password?';
   String get loading => _current['loading'] ?? 'Loading...';
   
-  String get selectYourRole      => _current['selectYourRole'] ?? 'Select your role';
-  String get passwordsDoNotMatch => _current['passwordsDoNotMatch'] ?? 'Passwords do not match';
-  String get pleaseSelectRole    => _current['pleaseSelectRole'] ?? 'Please select a role';
   String get getStarted          => _current['getStarted'] ?? 'Get Started';
   String get findNearbyStations  => _current['findNearbyStations'] ?? 'Find nearby gas stations in Ethiopia easily';
   String get authenticationError => _current['authenticationError'] ?? 'Authentication error';
-  String get firestoreError       => _current['firestoreError'] ?? 'Firestore error';
   String get unexpectedError      => _current['unexpectedError'] ?? 'An unexpected error occurred';
   
   String get loginSuccessful         => _current['loginSuccessful'] ?? 'Login successful!';
@@ -61,7 +53,6 @@ class AppLocalizations {
   // ──────────────────────────────────────────────────────────────────────────
   // Other screens / features (you can expand later)
   // ──────────────────────────────────────────────────────────────────────────
-  String get noAccount        => _current['noAccount'] ?? "Don't have an account? Sign Up";
   String get enjoyYourRide    => _current['enjoyYourRide'] ?? 'Enjoy your ride!';
   String get waitingForDriver => _current['waitingForDriver'] ?? 'Waiting for a driver...';
   String get rideNotFound     => _current['rideNotFound'] ?? 'Ride not found';

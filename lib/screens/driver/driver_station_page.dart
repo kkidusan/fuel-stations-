@@ -3,9 +3,11 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../../constants/app_enums.dart';
+import '../../services/app_api.dart';
 
 class DriverStationPage extends StatefulWidget {
   const DriverStationPage({super.key});
@@ -22,8 +24,7 @@ class _DriverStationPageState extends State<DriverStationPage> {
   String _currentAddress = 'Fetching location...';
   double _filterRadius = 15.0; // Default 15km radius
   String _selectedFuelType = 'All';
-  List<String> _fuelTypes = ['All', 'Petrol', 'Diesel', 'CNG', 'Electric'];
-  Map<String, int> _stationWaitingCounts = {};
+  List<String> _fuelTypes = ['All', ...kFuelTypes];
   bool _locationPermissionGranted = false;
   bool _locationServiceEnabled = true;
   
@@ -175,77 +176,31 @@ class _DriverStationPageState extends State<DriverStationPage> {
 
   Future<void> _loadStations() async {
     try {
-      final stationsSnapshot = await FirebaseFirestore.instance
-          .collection('users')
-          .where('role', isEqualTo: 'station')
-          .where('isActive', isEqualTo: true)
-          .limit(50)
-          .get();
+      final rows = await AppApi.stationsOverview(limit: 50);
 
       List<Map<String, dynamic>> stations = [];
-      
-      for (var doc in stationsSnapshot.docs) {
-        final data = doc.data();
-        final name = data['name'] as String? ?? 'Unknown Station';
-        final address = data['address'] as String? ?? 'No address provided';
-        final autoID = data['autoID'] as String?;
-        final stationId = _getStationId(doc.id, autoID);
-        
-        // Get station details from station_profiles or fuel_stations
-        final stationDetails = await _getStationDetails(stationId);
-        
-        // Get pumps info
-        final pumpsDoc = await FirebaseFirestore.instance
-            .collection('station_pumps')
-            .doc(stationId)
-            .get();
-        
-        int availablePumps = 0;
-        int totalPumps = 0;
-        List<String> fuelTypes = [];
-        double? latitude;
-        double? longitude;
-        String phone = 'N/A';
-        bool isOpen = data['isOpen'] as bool? ?? true;
-        
-        // Get coordinates from station details
-        if (stationDetails != null) {
-          latitude = stationDetails['latitude']?.toDouble() ?? 0.0;
-          longitude = stationDetails['longitude']?.toDouble() ?? 0.0;
-          phone = stationDetails['phoneNumber'] as String? ?? 'N/A';
-          
-          if (latitude == 0.0 && stationDetails['lat'] != null) {
-            latitude = stationDetails['lat']?.toDouble() ?? 0.0;
-          }
-          if (longitude == 0.0 && stationDetails['lng'] != null) {
-            longitude = stationDetails['lng']?.toDouble() ?? 0.0;
-          }
-        }
-        
-        if (pumpsDoc.exists) {
-          final pumpsData = pumpsDoc.data();
-          final pumps = List<Map<String, dynamic>>.from(pumpsData?['pumps'] ?? []);
-          totalPumps = pumps.length;
-          
-          for (var pump in pumps) {
-            final status = pump['status']?.toString() ?? 'unknown';
-            final isActive = pump['isActive'] ?? true;
-            final fuelType = pump['fuelType']?.toString() ?? 'Unknown';
-            
-            if (status == 'available' && isActive == true) {
-              availablePumps++;
-            }
-            
-            if (!fuelTypes.contains(fuelType)) {
-              fuelTypes.add(fuelType);
-            }
-          }
-        }
 
-        // Get today's waiting count
-        final waitingCount = await _getTodayWaitingCount(stationId);
-        _stationWaitingCounts[stationId] = waitingCount;
-        
+      for (var row in rows) {
+        final rawName = (row['name'] ?? row['station_name'] ?? 'Unknown Station')
+            .toString()
+            .trim();
+        final name = rawName.isNotEmpty ? rawName : 'Unknown Station';
+        final address =
+            (row['address'] as String?)?.trim() ?? 'No address provided';
+        final stationId =
+            (row['station_id'] ?? row['uid'] ?? '').toString().trim();
+        final phone = (row['phone'] as String?)?.trim() ?? 'N/A';
+        final isOpen = row['is_open'] as bool? ?? true;
+        final totalPumps = (row['total_pumps'] as num?)?.toInt() ?? 0;
+        final availablePumps = (row['available_pumps'] as num?)?.toInt() ?? 0;
+        final waitingCount = (row['waiting_count'] as num?)?.toInt() ?? 0;
+        final latitude = (row['latitude'] as num?)?.toDouble() ?? 0.0;
+        final longitude = (row['longitude'] as num?)?.toDouble() ?? 0.0;
+        final fuelTypes = (row['fuel_types'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            <String>[];
+
         stations.add({
           'id': stationId,
           'name': name,
@@ -258,8 +213,8 @@ class _DriverStationPageState extends State<DriverStationPage> {
           'isOpen': isOpen,
           'openingTime': '06:00',
           'closingTime': '22:00',
-          'latitude': latitude ?? 0.0,
-          'longitude': longitude ?? 0.0,
+          'latitude': latitude,
+          'longitude': longitude,
           'distance': 0.0,
           'waitingCount': waitingCount,
           'isRecommended': name.toLowerCase().contains('total') ||
@@ -280,7 +235,7 @@ class _DriverStationPageState extends State<DriverStationPage> {
       if (_currentPosition != null) {
         _calculateDistances();
       }
-      
+
       // Update map markers if in map view
       if (_showMapView) {
         _updateMapMarkers();
@@ -294,79 +249,6 @@ class _DriverStationPageState extends State<DriverStationPage> {
       }
     }
   }
-
-  Future<Map<String, dynamic>?> _getStationDetails(String stationId) async {
-    try {
-      // Try station_profiles first
-      final profileDoc = await FirebaseFirestore.instance
-          .collection('station_profiles')
-          .doc(stationId)
-          .get();
-      
-      if (profileDoc.exists) {
-        return profileDoc.data();
-      }
-      
-      // Try fuel_stations as fallback
-      final stationDoc = await FirebaseFirestore.instance
-          .collection('fuel_stations')
-          .doc(stationId)
-          .get();
-      
-      if (stationDoc.exists) {
-        return stationDoc.data();
-      }
-      
-      // Try stations collection as another fallback
-      final stationsDoc = await FirebaseFirestore.instance
-          .collection('stations')
-          .doc(stationId)
-          .get();
-      
-      if (stationsDoc.exists) {
-        return stationsDoc.data();
-      }
-    } catch (e) {
-      debugPrint('Error getting station details: $e');
-    }
-    
-    return null;
-  }
-
-  Future<int> _getTodayWaitingCount(String stationId) async {
-    try {
-      final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final todayEnd = todayStart.add(const Duration(days: 1));
-
-      final snapshot = await FirebaseFirestore.instance
-          .collection('preorders')
-          .where('stationId', isEqualTo: stationId)
-          .where('status', isEqualTo: 'waiting')
-          .where(
-            'createdAt',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart),
-          )
-          .where(
-            'createdAt',
-            isLessThan: Timestamp.fromDate(todayEnd),
-          )
-          .get();
-
-      return snapshot.size;
-    } catch (e) {
-      debugPrint('Error getting waiting count: $e');
-      return 0;
-    }
-  }
-
-  String _getStationId(String docId, String? autoID) {
-    if (autoID != null && autoID != 'no-autoID' && autoID.trim().isNotEmpty) {
-      return autoID.trim();
-    }
-    return docId;
-  }
-
   void _calculateDistances() {
     if (_currentPosition == null) return;
 
@@ -830,7 +712,7 @@ class _DriverStationPageState extends State<DriverStationPage> {
                           runSpacing: 8,
                           children: _fuelTypes.map((type) {
                             return ChoiceChip(
-                              label: Text(type),
+                              label: Text(type == 'All' ? 'All' : fuelTypeLabel(type)),
                               selected: _selectedFuelType == type,
                               onSelected: (selected) {
                                 setState(() {
@@ -1703,7 +1585,7 @@ class _DriverStationPageState extends State<DriverStationPage> {
                                             if (_selectedFuelType != 'All') ...[
                                               const SizedBox(width: 8),
                                               Chip(
-                                                label: Text('Fuel: $_selectedFuelType'),
+                                                label: Text('Fuel: ${_selectedFuelType == 'All' ? 'All' : fuelTypeLabel(_selectedFuelType)}'),
                                                 onDeleted: () {
                                                   setState(() {
                                                     _selectedFuelType = 'All';

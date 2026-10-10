@@ -3,19 +3,14 @@ const Map<String, String> en = {
   'welcome': 'Welcome',
   'welcomeBack': 'Welcome back',               // ← added
   'login': 'Login',
-  'signUp': 'Sign Up',
   'email': 'Email',
   'password': 'Password',
-  'confirmPassword': 'Confirm Password',       // ← useful for signup
   'home': 'Home',
   'profile': 'Profile',
   'darkMode': 'Dark Mode',
   'language': 'Language',
   'amharic': 'Amharic',
   'english': 'English',
-  'alreadyHaveAccount': 'Already have an account? Login',
-  'noAccount': "Don't have an account? Sign Up",
-  'dontHaveAccount': "Don't have an account?", // ← added
   'forgotPassword': 'Forgot password?',      
     'loading': 'Loading...',
       'loginSuccessful': 'Login successful!',
@@ -31,11 +26,7 @@ const Map<String, String> en = {
   'rideNotFound': 'Ride not found',
   'goOffline': 'Go Offline',
   'lookingForNearby': 'Looking for nearby stations...',
-  'selectYourRole': 'Select your role',
-  'firestoreError': 'Firestore error',
   'unexpectedError': 'An unexpected error occurred',
-  'passwordsDoNotMatch': 'Passwords do not match',
-  'pleaseSelectRole': 'Please select a role',
   'getStarted': 'Get Started',
   'findNearbyStations': 'Find nearby gas stations in Ethiopia easily',
 };

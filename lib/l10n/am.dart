@@ -3,19 +3,14 @@ const Map<String, String> am = {
   'welcome': 'እንኳን ደህና መጡ',
   'welcomeBack': 'እንኳን በደህና ተመለሱ',           // ← added
   'login': 'ግባ',
-  'signUp': 'መመዝገብ',
   'email': 'ኢሜይል',
   'password': 'የይለፍ ቃል',
-  'confirmPassword': 'የይለፍ ቃል አረጋግጥ',     // ← added (useful for signup)
   'home': 'መነሻ',
   'profile': 'መገለጫ',
   'darkMode': 'ጨለማ ሁነታ',
   'language': 'ቋንቋ',
   'amharic': 'አማርኛ',
   'english': 'English',
-  'alreadyHaveAccount': 'መለያ አለዎት? ግባ',
-  'noAccount': 'መለያ የለዎትም? መመዝገብ',
-  'dontHaveAccount': 'መለያ የለዎትም?',           // ← added
   'forgotPassword': 'የይለፍ ቃል ረሱ?',            // ← added
   'enjoyYourRide': 'መንገድህን ተደስተህ ተጓዥ!',
   'waitingForDriver': 'ሾፌር እየጠበቅክ ነው...',
@@ -30,11 +25,7 @@ const Map<String, String> am = {
   'forgotPasswordComingSoon': 'የይለፍ ቃል መርሳት ባህሪ በቅርብ ጊዜ ይገኛል',
   'rideNotFound': 'ጉዞ አልተገኘም',
   'goOffline': 'ከመስመር ውጪ ሁን',
-  'selectYourRole': 'ሚናዎን ይምረጡ',
-  'firestoreError': 'Firestore ስህተት',
   'unexpectedError': 'ያልተጠበቀ ስህተት ተከስቷል',
-  'passwordsDoNotMatch': 'የይለፍ ቃላት አይዛመዱም',
-  'pleaseSelectRole': 'እባክዎን ሚና ይምረጡ',
   'getStarted': 'ጀምር',
   'findNearbyStations': 'በኢትዮጵያ ውስጥ አቅራቢያ ያሉ የነዳጅ መሙያ ጣቢያዎችን በቀላሉ ያግኙ',
   'lookingForNearby': 'አቅራቢያ ያሉ መሙያዎችን በመፈለግ ላይ...',

@@ -1,14 +1,13 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
-
 import 'station_settings_page.dart';
 import 'station_manage_page.dart';
-import 'station_pumps_page.dart';
+import '../../services/api_client.dart';
+import '../../services/app_api.dart';
+import '../../services/auth_user_service.dart';
 
 class StationHomePage extends StatefulWidget {
   final VoidCallback? onNavigateToPreorders;
-
   const StationHomePage({
     super.key,
     this.onNavigateToPreorders,
@@ -19,410 +18,248 @@ class StationHomePage extends StatefulWidget {
 }
 
 class _StationHomePageState extends State<StationHomePage> {
-  bool isStationOpen = true;
-  String? _stationAutoId;
+  /// Legacy user UID (JWT `auth.sub`) — used as the station key for stats.
+  String? _stationUid;
+
+  Timer? _refreshTimer;
+
+  bool _statsLoading = true;
+  bool _statsError = false;
+
+  int _pendingCount = 0;
+  int _todayCompleted = 0;
+  double _monthRev = 0.0;
+  int _lowInventoryCount = 0;
+  double _totalLiters = 0.0;
+  double _petrolLiters = 0.0;
+  double _dieselLiters = 0.0;
+  double _keroseneLiters = 0.0;
+  int _lowTanksCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadStationData();
+    final user = AuthService.currentUser;
+    _stationUid = user?.uid;
+
+    if (_stationUid != null && _stationUid!.isNotEmpty) {
+      _loadStats();
+    }
+
+    _refreshTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      if (mounted && _stationUid != null && _stationUid!.isNotEmpty) {
+        _loadStats();
+      }
+    });
   }
 
-  Future<void> _loadStationData() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      debugPrint('No authenticated user');
-      return;
-    }
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadStats() async {
+    final stationId = _stationUid?.trim();
+    if (stationId == null || stationId.isEmpty) return;
 
     try {
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-
-      if (userDoc.exists) {
-        final data = userDoc.data() as Map<String, dynamic>;
+      final stats = await AppApi.stationStats(stationId);
+      if (!mounted) return;
+      setState(() {
+        _pendingCount = (stats['pending_count'] as num?)?.toInt() ?? 0;
+        _todayCompleted = (stats['today_completed'] as num?)?.toInt() ?? 0;
+        _monthRev = (stats['month_rev'] as num?)?.toDouble() ?? 0.0;
+        _lowInventoryCount = (stats['low_inventory_count'] as num?)?.toInt() ?? 0;
+        _totalLiters = (stats['total_liters'] as num?)?.toDouble() ?? 0.0;
+        _petrolLiters = (stats['petrol_liters'] as num?)?.toDouble() ?? 0.0;
+        _dieselLiters = (stats['diesel_liters'] as num?)?.toDouble() ?? 0.0;
+        _keroseneLiters = (stats['kerosene_liters'] as num?)?.toDouble() ?? 0.0;
+        _lowTanksCount = (stats['low_tanks_count'] as num?)?.toInt() ?? 0;
+        _statsLoading = false;
+        _statsError = false;
+      });
+    } on ApiException catch (e) {
+      debugPrint('Stats fetch error: $e');
+      if (mounted) {
         setState(() {
-          _stationAutoId = data['autoID'] as String?;
+          _statsLoading = false;
+          _statsError = true;
         });
-      } else {
-        debugPrint('No user document found for user: ${user.uid}');
       }
     } catch (e) {
-      debugPrint('Error loading station data: $e');
-    }
-  }
-
-  Stream<int> _pendingOrdersCountStream() {
-    final autoId = _stationAutoId?.trim();
-    if (autoId == null || autoId.isEmpty) {
-      return Stream.value(0);
-    }
-
-    return FirebaseFirestore.instance
-        .collection('preorders')
-        .where('stationId', isEqualTo: autoId)
-        .where('status', isEqualTo: 'waiting')
-        .snapshots()
-        .map((snap) => snap.size);
-  }
-
-  Stream<int> _availablePumpsCountStream() {
-    final autoId = _stationAutoId?.trim();
-    if (autoId == null || autoId.isEmpty) {
-      return Stream.value(0);
-    }
-
-    return FirebaseFirestore.instance
-        .collection('station_pumps')
-        .doc(autoId)
-        .snapshots()
-        .map((snapshot) {
-      if (!snapshot.exists) return 0;
-      
-      final data = snapshot.data() as Map<String, dynamic>;
-      final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-      
-      return pumps.where((pump) {
-        final status = pump['status']?.toString() ?? '';
-        return status == 'available';
-      }).length;
-    });
-  }
-
-  Stream<int> _totalPumpsCountStream() {
-    final autoId = _stationAutoId?.trim();
-    if (autoId == null || autoId.isEmpty) {
-      return Stream.value(0);
-    }
-
-    return FirebaseFirestore.instance
-        .collection('station_pumps')
-        .doc(autoId)
-        .snapshots()
-        .map((snapshot) {
-      if (!snapshot.exists) return 0;
-      
-      final data = snapshot.data() as Map<String, dynamic>;
-      final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-      return pumps.length;
-    });
-  }
-
-  Stream<double> _revenueStream() {
-    final autoId = _stationAutoId?.trim();
-    if (autoId == null || autoId.isEmpty) {
-      return Stream.value(0.0);
-    }
-
-    return FirebaseFirestore.instance
-        .collection('station_pumps')
-        .doc(autoId)
-        .snapshots()
-        .map((snapshot) {
-      if (!snapshot.exists) return 0.0;
-      
-      final data = snapshot.data() as Map<String, dynamic>;
-      final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-      
-      double totalEarnings = 0.0;
-      for (final pump in pumps) {
-        final earnings = pump['totalEarnings'];
-        if (earnings != null) {
-          totalEarnings += (earnings is num) ? earnings.toDouble() : 0.0;
-        }
+      debugPrint('Stats fetch error: $e');
+      if (mounted) {
+        setState(() {
+          _statsLoading = false;
+          _statsError = true;
+        });
       }
-      return totalEarnings;
-    });
+    }
   }
 
-  Stream<int> _inUsePumpsCountStream() {
-    final autoId = _stationAutoId?.trim();
-    if (autoId == null || autoId.isEmpty) {
-      return Stream.value(0);
-    }
-
-    return FirebaseFirestore.instance
-        .collection('station_pumps')
-        .doc(autoId)
-        .snapshots()
-        .map((snapshot) {
-      if (!snapshot.exists) return 0;
-      
-      final data = snapshot.data() as Map<String, dynamic>;
-      final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-      
-      return pumps.where((pump) {
-        final status = pump['status']?.toString() ?? '';
-        return status == 'in-use';
-      }).length;
-    });
-  }
-
-  Stream<int> _servedTodayStream() {
-    final autoId = _stationAutoId?.trim();
-    if (autoId == null || autoId.isEmpty) {
-      return Stream.value(0);
-    }
-
-    return FirebaseFirestore.instance
-        .collection('station_pumps')
-        .doc(autoId)
-        .snapshots()
-        .map((snapshot) {
-      if (!snapshot.exists) return 0;
-      
-      final data = snapshot.data() as Map<String, dynamic>;
-      final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-      
-      int servedToday = 0;
-      for (final pump in pumps) {
-        final served = pump['servedToday'];
-        if (served != null) {
-          servedToday += (served is num) ? served.toInt() : 0;
-        }
-      }
-      return servedToday;
-    });
+  Widget _buildStatValue(Widget value) {
+    if (_statsError) return _buildErrorWidget();
+    if (_statsLoading) return _buildLoadingWidget();
+    return value;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final colorScheme = theme.colorScheme;
+    final hasStation = _stationUid != null && _stationUid!.isNotEmpty;
 
     return Scaffold(
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
-            
-           
-            // Stats section - 3x2 grid
             SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               sliver: SliverGrid(
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: 1.35, // Adjusted for better text fit
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 1.8,
                 ),
                 delegate: SliverChildListDelegate([
-                  // Pending Orders Card
                   _MiniStatCard(
                     icon: Icons.shopping_cart_outlined,
                     title: "Pending Orders",
                     color: Colors.blue,
-                    child: _stationAutoId == null
-                        ? const Text("—", style: TextStyle(fontSize: 20))
-                        : StreamBuilder<int>(
-                            stream: _pendingOrdersCountStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasError) {
-                                return _buildErrorWidget();
-                              }
-                              if (snapshot.connectionState == ConnectionState.waiting ||
-                                  !snapshot.hasData) {
-                                return _buildLoadingWidget();
-                              }
-                              return Text(
-                                "${snapshot.data}",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.onSurface,
-                                ),
-                              );
-                            },
+                    child: !hasStation
+                        ? const Text("—", style: TextStyle(fontSize: 14))
+                        : _buildStatValue(
+                            Text(
+                              '$_pendingCount',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
                           ),
                     onTap: widget.onNavigateToPreorders,
                   ),
-
-                  // Total Pumps Card
+                  _MiniStatCard(
+                    icon: Icons.check_circle_outline_rounded,
+                    title: "Today Completed",
+                    color: Colors.green,
+                    child: !hasStation
+                        ? const Text("—", style: TextStyle(fontSize: 14))
+                        : _buildStatValue(
+                            Text(
+                              '$_todayCompleted',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                    onTap: null,
+                  ),
+                  _MiniStatCard(
+                    icon: Icons.calendar_month_outlined,
+                    title: "This Month",
+                    color: Colors.purple,
+                    child: !hasStation
+                        ? const Text("ETB —", style: TextStyle(fontSize: 13))
+                        : _buildStatValue(
+                            Text(
+                              "ETB ${_monthRev.toStringAsFixed(0)}",
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                    onTap: null,
+                  ),
+                  _MiniStatCard(
+                    icon: Icons.warning_amber_outlined,
+                    title: "Low Stock",
+                    color: Colors.orange,
+                    child: !hasStation
+                        ? const Text("—", style: TextStyle(fontSize: 14))
+                        : _buildStatValue(
+                            Text(
+                              '$_lowInventoryCount',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                    onTap: null,
+                  ),
+                  _MiniStatCard(
+                    icon: Icons.local_gas_station,
+                    title: "Total Fuel",
+                    color: Colors.teal,
+                    child: !hasStation
+                        ? const Text("— L", style: TextStyle(fontSize: 13))
+                        : _buildStatValue(
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  "${_totalLiters.toStringAsFixed(0)} L",
+                                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                                ),
+                                if (_lowTanksCount > 0)
+                                  Text(
+                                    "$_lowTanksCount low",
+                                    style: const TextStyle(fontSize: 10, color: Colors.red),
+                                  ),
+                              ],
+                            ),
+                          ),
+                    onTap: null,
+                  ),
                   _MiniStatCard(
                     icon: Icons.local_gas_station_outlined,
-                    title: "Total Pumps",
-                    color: Colors.teal,
-                    child: _stationAutoId == null
-                        ? const Text("—", style: TextStyle(fontSize: 20))
-                        : StreamBuilder<int>(
-                            stream: _totalPumpsCountStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasError) {
-                                return _buildErrorWidget();
-                              }
-                              if (snapshot.connectionState == ConnectionState.waiting ||
-                                  !snapshot.hasData) {
-                                return _buildLoadingWidget();
-                              }
-                              return Text(
-                                "${snapshot.data}",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.onSurface,
-                                ),
-                              );
-                            },
-                          ),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => StationPumpsPage(stationId: _stationAutoId),
-                        ),
-                      );
-                    },
-                  ),
-
-                  // Available Pumps Card
-                  _MiniStatCard(
-                    icon: Icons.check_circle_outline,
-                    title: "Available",
-                    color: Colors.green,
-                    child: _stationAutoId == null
-                        ? const Text("—", style: TextStyle(fontSize: 20))
-                        : StreamBuilder<int>(
-                            stream: _availablePumpsCountStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasError) {
-                                return _buildErrorWidget();
-                              }
-                              if (snapshot.connectionState == ConnectionState.waiting ||
-                                  !snapshot.hasData) {
-                                return _buildLoadingWidget();
-                              }
-                              return Text(
-                                "${snapshot.data}",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.onSurface,
-                                ),
-                              );
-                            },
-                          ),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => StationPumpsPage(stationId: _stationAutoId),
-                        ),
-                      );
-                    },
-                  ),
-
-                  // In-Use Pumps Card
-                  _MiniStatCard(
-                    icon: Icons.sync,
-                    title: "In-Use",
-                    color: Colors.orange,
-                    child: _stationAutoId == null
-                        ? const Text("—", style: TextStyle(fontSize: 20))
-                        : StreamBuilder<int>(
-                            stream: _inUsePumpsCountStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasError) {
-                                return _buildErrorWidget();
-                              }
-                              if (snapshot.connectionState == ConnectionState.waiting ||
-                                  !snapshot.hasData) {
-                                return _buildLoadingWidget();
-                              }
-                              return Text(
-                                "${snapshot.data}",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.onSurface,
-                                ),
-                              );
-                            },
-                          ),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => StationPumpsPage(stationId: _stationAutoId),
-                        ),
-                      );
-                    },
-                  ),
-
-                  // Revenue Card
-                  _MiniStatCard(
-                    icon: Icons.attach_money_outlined,
-                    title: "Revenue",
-                    color: Colors.purple,
-                    child: _stationAutoId == null
-                        ? Text(
-                            "₹0",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface,
+                    title: "Petrol",
+                    color: Colors.blue[800]!,
+                    child: !hasStation
+                        ? const Text("— L", style: TextStyle(fontSize: 13))
+                        : _buildStatValue(
+                            Text(
+                              "${_petrolLiters.toStringAsFixed(0)} L",
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                             ),
-                          )
-                        : StreamBuilder<double>(
-                            stream: _revenueStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasError) {
-                                return _buildErrorWidget();
-                              }
-                              if (snapshot.connectionState == ConnectionState.waiting ||
-                                  !snapshot.hasData) {
-                                return _buildLoadingWidget();
-                              }
-                              return Text(
-                                "₹${snapshot.data!.toStringAsFixed(0)}",
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.onSurface,
-                                ),
-                              );
-                            },
                           ),
-                    onTap: () {
-                      // Navigate to revenue reports page
-                    },
+                    onTap: null,
                   ),
-
-                  // Manage Station Card (NEW)
                   _MiniStatCard(
-                    icon: Icons.business_outlined,
-                    title: "Manage Station",
-                    color: Colors.blue[700]!,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.settings,
-                          size: 32,
-                          color: colorScheme.onSurface.withOpacity(0.8),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          "Settings",
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colorScheme.onSurface.withOpacity(0.7),
+                    icon: Icons.local_gas_station_outlined,
+                    title: "Diesel",
+                    color: Colors.green[800]!,
+                    child: !hasStation
+                        ? const Text("— L", style: TextStyle(fontSize: 13))
+                        : _buildStatValue(
+                            Text(
+                              "${_dieselLiters.toStringAsFixed(0)} L",
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const StationManagePage(),
-                        ),
-                      );
-                    },
+                    onTap: null,
+                  ),
+                  _MiniStatCard(
+                    icon: Icons.local_gas_station_outlined,
+                    title: "Kerosene",
+                    color: Colors.amber[800]!,
+                    child: !hasStation
+                        ? const Text("— L", style: TextStyle(fontSize: 13))
+                        : _buildStatValue(
+                            Text(
+                              "${_keroseneLiters.toStringAsFixed(0)} L",
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                    onTap: null,
                   ),
                 ]),
               ),
             ),
-
-            // Quick Actions title
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
@@ -435,8 +272,6 @@ class _StationHomePageState extends State<StationHomePage> {
                 ),
               ),
             ),
-
-            // Quick Actions list
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               sliver: SliverList(
@@ -444,126 +279,87 @@ class _StationHomePageState extends State<StationHomePage> {
                   _CompactActionTile(
                     icon: Icons.shopping_cart_outlined,
                     title: 'Pending Orders',
-                    subtitle: 'View waiting orders',
+                    subtitle: 'View & confirm waiting orders',
                     color: Colors.blue,
                     onTap: widget.onNavigateToPreorders,
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
-                    icon: Icons.local_gas_station_outlined,
-                    title: 'Add New Pump',
-                    subtitle: 'Add a fuel pump',
-                    color: Colors.green,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => StationPumpsPage(stationId: _stationAutoId),
-                        ),
-                      ).then((_) {
-                        _loadStationData();
-                      });
-                    },
+                    icon: Icons.checklist_rounded,
+                    title: 'Today Completed',
+                    subtitle: 'View orders finished today',
+                    color: Colors.green[700]!,
+                    onTap: () {},
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
                     icon: Icons.analytics_outlined,
-                    title: 'Station Reports',
-                    subtitle: 'Sales & performance',
+                    title: 'Sales Reports',
+                    subtitle: 'Daily, weekly, monthly',
                     color: Colors.indigo,
-                    onTap: () {
-                      // Navigate to reports page
-                    },
+                    onTap: () {},
+                  ),
+                  const SizedBox(height: 10),
+                  _CompactActionTile(
+                    icon: Icons.local_gas_station,
+                    title: 'Fuel Inventory',
+                    subtitle: 'Tanks, levels & refills',
+                    color: Colors.teal,
+                    onTap: () {},
+                  ),
+                  const SizedBox(height: 10),
+                  _CompactActionTile(
+                    icon: Icons.inventory_2_outlined,
+                    title: 'Other Inventory',
+                    subtitle: 'Lubricants, shop items',
+                    color: Colors.orange,
+                    onTap: () {},
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
                     icon: Icons.business_outlined,
                     title: 'Station Details',
-                    subtitle: 'Manage station info',
+                    subtitle: 'Update name, address, contact',
                     color: Colors.blue[700]!,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const StationManagePage(),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  _CompactActionTile(
-                    icon: Icons.local_gas_station,
-                    title: 'All Pumps',
-                    subtitle: 'View all pumps',
-                    color: Colors.teal,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => StationPumpsPage(stationId: _stationAutoId),
-                        ),
-                      );
-                    },
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const StationManagePage()),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   _CompactActionTile(
                     icon: Icons.settings_outlined,
-                    title: 'Settings',
-                    subtitle: 'Station configuration',
+                    title: 'Station Settings',
+                    subtitle: 'Prices, working hours, etc.',
                     color: Colors.grey[700]!,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const StationSettingsPage(),
-                        ),
-                      );
-                    },
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const StationSettingsPage()),
+                    ),
                   ),
                 ]),
               ),
             ),
-
             const SliverToBoxAdapter(child: SizedBox(height: 80)),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        mini: true,
-        backgroundColor: colorScheme.primary,
-        foregroundColor: colorScheme.onPrimary,
-        child: const Icon(Icons.add),
-        onPressed: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => StationPumpsPage(stationId: _stationAutoId),
-            ),
-          ).then((_) {
-            _loadStationData();
-          });
-        },
       ),
     );
   }
 
   Widget _buildLoadingWidget() {
     return const SizedBox(
-      height: 24,
-      width: 24,
-      child: CircularProgressIndicator(strokeWidth: 2.5),
+      height: 18,
+      width: 18,
+      child: CircularProgressIndicator(strokeWidth: 2),
     );
   }
 
   Widget _buildErrorWidget() {
-    return const Text(
-      "Error",
-      style: TextStyle(
-        color: Colors.red,
-        fontSize: 16,
-      ),
-    );
+    return const Text("Error", style: TextStyle(color: Colors.red, fontSize: 16));
   }
 }
 
-// ────────────────────────────────────────────────
-// Updated Stat card with dark mode support
-// ────────────────────────────────────────────────
 class _MiniStatCard extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -583,62 +379,60 @@ class _MiniStatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    
     return Card(
       elevation: isDark ? 2 : 1,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: isDark 
-          ? BorderSide(color: theme.colorScheme.outline.withOpacity(0.1))
-          : BorderSide.none,
+        borderRadius: BorderRadius.circular(10),
+        side: isDark ? BorderSide(color: theme.colorScheme.outline.withOpacity(0.1)) : BorderSide.none,
       ),
-      color: isDark 
-        ? theme.colorScheme.surfaceVariant.withOpacity(0.5)
-        : theme.colorScheme.surface,
+      color: isDark ? theme.colorScheme.surfaceVariant.withOpacity(0.5) : theme.colorScheme.surface,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(8),
           child: Column(
+            // ── Card layout ──────────────────────────────────────────
+            // Row 1: icon  on the LEFT,  label (title) on the RIGHT.
+            // Row 2: the number/value BELOW, aligned to the left
+            //        (directly under the icon).
+            // ──────────────────────────────────────────────────────────
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Icon(
-                    icon,
-                    size: 24,
-                    color: color,
-                  ),
-                  if (onTap != null)
-                    Icon(
-                      Icons.chevron_right,
-                      size: 16,
-                      color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  // Left: icon
+                  Icon(icon, size: 18, color: color),
+                  // Right: label
+                  Flexible(
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.right,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurface.withOpacity(0.75),
+                      ),
                     ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
+              // Below: the number / value (centered on the card width)
               Expanded(
-                child: Center(
+                child: Align(
+                  alignment: Alignment.center,
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
+                    alignment: Alignment.center,
                     child: child,
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -648,9 +442,6 @@ class _MiniStatCard extends StatelessWidget {
   }
 }
 
-// ────────────────────────────────────────────────
-// Updated Compact action tile with dark mode support
-// ────────────────────────────────────────────────
 class _CompactActionTile extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -670,18 +461,13 @@ class _CompactActionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    
     return Card(
       elevation: isDark ? 2 : 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: isDark 
-          ? BorderSide(color: theme.colorScheme.outline.withOpacity(0.1))
-          : BorderSide.none,
+        side: isDark ? BorderSide(color: theme.colorScheme.outline.withOpacity(0.1)) : BorderSide.none,
       ),
-      color: isDark 
-        ? theme.colorScheme.surfaceVariant.withOpacity(0.5)
-        : theme.colorScheme.surface,
+      color: isDark ? theme.colorScheme.surfaceVariant.withOpacity(0.5) : theme.colorScheme.surface,
       clipBehavior: Clip.hardEdge,
       child: InkWell(
         onTap: onTap,
@@ -689,31 +475,16 @@ class _CompactActionTile extends StatelessWidget {
           dense: true,
           visualDensity: VisualDensity.compact,
           minLeadingWidth: 40,
-          leading: Icon(
-            icon,
-            size: 22,
-            color: color,
-          ),
+          leading: Icon(icon, size: 22, color: color),
           title: Text(
             title,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface,
-            ),
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface),
           ),
           subtitle: Text(
             subtitle,
-            style: TextStyle(
-              fontSize: 12,
-              color: theme.colorScheme.onSurface.withOpacity(0.7),
-            ),
+            style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withOpacity(0.7)),
           ),
-          trailing: Icon(
-            Icons.chevron_right,
-            size: 18,
-            color: theme.colorScheme.onSurface.withOpacity(0.5),
-          ),
+          trailing: Icon(Icons.chevron_right, size: 18, color: theme.colorScheme.onSurface.withOpacity(0.5)),
         ),
       ),
     );

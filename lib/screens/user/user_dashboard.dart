@@ -1,7 +1,7 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../../services/auth_user_service.dart'; // ← corrected import (use the real file name)
+import '../../services/auth_user_service.dart';
+import '../auth/auth_wrapper.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -249,15 +249,12 @@ class _UserDashboardState extends State<UserDashboard> {
             leading: const Icon(Icons.logout, color: Colors.red),
             title: const Text('Logout', style: TextStyle(color: Colors.red)),
             onTap: () async {
-              await FirebaseAuth.instance.signOut();
-              await AuthService.clearUserData();
+              await AuthService.signOut();
 
               if (context.mounted) {
-                // Better: use pushReplacementNamed if you have named routes
-                // or pushAndRemoveUntil if not
-                Navigator.pushNamedAndRemoveUntil(
+                Navigator.pushAndRemoveUntil(
                   context,
-                  '/', // ← assuming '/' is your AuthWrapper / Splash / Login route
+                  MaterialPageRoute(builder: (_) => const AuthWrapper()),
                   (route) => false,
                 );
               }

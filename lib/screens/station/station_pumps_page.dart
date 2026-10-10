@@ -1,6 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../constants/app_enums.dart';
+import '../../services/api_client.dart';
+import '../../services/app_api.dart';
+import '../../services/auth_user_service.dart';
 
 class StationPumpsPage extends StatefulWidget {
   const StationPumpsPage({super.key, String? stationId});
@@ -24,17 +27,13 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
   
   // Available fuel types from station
   List<String> _availableFuelTypes = [];
+
+  // Pump list loaded from the station_pumps document (replaces the
+  // old realtime stream — reloaded after every mutation).
+  List<Map<String, dynamic>> _pumps = [];
   
-  // Common fuel types for dropdown
-  final List<String> _commonFuelTypes = [
-    'Diesel',
-    'Petrol (Regular)',
-    'Petrol (Premium)',
-    'CNG',
-    'LPG',
-    'Electric',
-    'Bio-Diesel',
-  ];
+  // Common fuel types for dropdown (canonical values — see app_enums.dart)
+  final List<String> _commonFuelTypes = kFuelTypes;
 
   // Scroll controller for auto-scroll
   final ScrollController _scrollController = ScrollController();
@@ -82,32 +81,27 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
     setState(() => _isLoading = true);
     
     try {
-      final user = FirebaseAuth.instance.currentUser;
+      final user = AuthService.currentUser;
       if (user == null) return;
 
-      // Get user document to fetch autoID
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      // User profile row (snake_case) holds the FS_WLD code + fuel types.
+      final row = user.row;
+      final autoId = row['auto_id']?.toString();
+      final stationId = row['station_id']?.toString();
 
-      if (userDoc.exists) {
-        final data = userDoc.data() as Map<String, dynamic>;
-        setState(() {
-          _stationAutoId = data['autoID']?.toString(); // Get autoID
-          _availableFuelTypes = List<String>.from(data['fuelTypes'] ?? []);
-        });
-        
-        // If autoID doesn't exist, create it using autoID format
-        if (_stationAutoId == null || _stationAutoId!.isEmpty) {
-          await _createStationAutoId(user.uid);
-        } else {
-          // Ensure station_pumps document exists
-          await _ensureStationPumpsDocument();
-        }
+      setState(() {
+        _stationAutoId =
+            (autoId != null && autoId.isNotEmpty) ? autoId : stationId;
+        _availableFuelTypes = List<String>.from(row['fuel_types'] ?? []);
+      });
+
+      // If autoID doesn't exist, create it via the backend bootstrap.
+      if (_stationAutoId == null || _stationAutoId!.isEmpty) {
+        await _createStationAutoId();
       } else {
-        // Create new station with autoID
-        await _createStationAutoId(user.uid);
+        // Ensure station_pumps document exists, then load its pumps.
+        await _ensureStationPumpsDocument();
+        await _loadPumps();
       }
     } catch (e) {
       debugPrint('Error loading station data: $e');
@@ -123,60 +117,34 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
     }
   }
 
-  Future<void> _createStationAutoId(String userId) async {
+  Future<void> _createStationAutoId() async {
     try {
-      // Generate autoID: FS_WLD_XXXX (where XXXX is random number)
-      final randomNum = DateTime.now().millisecondsSinceEpoch % 10000;
-      final newAutoId = 'FS_WLD_${randomNum.toString().padLeft(4, '0')}';
-      
-      // Create stations collection document with autoID as document ID
-      await FirebaseFirestore.instance
-          .collection('stations')
-          .doc(newAutoId) // Use autoID as document ID
-          .set({
-            'autoID': newAutoId, // Store as field
-            'stationId': newAutoId, // Also store as stationId for compatibility
-            'ownerId': userId,
-            'stationName': 'Fuel Station ${newAutoId.substring(7)}',
-            'fuelTypes': [],
-            'pumpCount': 0,
-            'totalEarnings': 0.0,
-            'totalCustomers': 0,
-            'status': 'active',
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      
-      // Update user document with autoID
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .update({
-            'autoID': newAutoId,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      
-      // Create station_pumps document with autoID as document ID
-      await FirebaseFirestore.instance
-          .collection('station_pumps')
-          .doc(newAutoId) // Use autoID as document ID
-          .set({
-            'autoID': newAutoId, // Store as field
-            'stationId': newAutoId, // Also store as stationId for compatibility
-            'pumps': [],
-            'totalPumps': 0,
-            'activePumps': 0,
-            'maintenancePumps': 0,
-            'offlinePumps': 0,
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-      
-      setState(() {
-        _stationAutoId = newAutoId;
-      });
-      
-      debugPrint('Created new station with autoID: $newAutoId');
+      // POST /api/stations/bootstrap generates FS_WLD_XXXX, stores it on the
+      // user row and creates the station docs.
+      final key = await AppApi.bootstrapStation();
+
+      // Refresh the cached user so auto_id / station_id are visible app-wide.
+      final res = await AppApi.myProfile();
+      final updatedUser = Map<String, dynamic>.from(res['user'] as Map? ?? {});
+      AuthService.updateCachedUser(updatedUser);
+
+      if (mounted) {
+        setState(() {
+          _stationAutoId = key;
+          _availableFuelTypes =
+              List<String>.from(updatedUser['fuel_types'] ?? []);
+        });
+      }
+
+      await _loadPumps();
+      debugPrint('Created new station with autoID: $key');
+    } on ApiException catch (e) {
+      debugPrint('Error creating station autoID: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error creating station: ${e.message}')),
+        );
+      }
     } catch (e) {
       debugPrint('Error creating station autoID: $e');
       if (mounted) {
@@ -191,32 +159,59 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
     if (_stationAutoId == null) return;
     
     try {
-      // Check if station_pumps document exists
-      final pumpsDoc = await FirebaseFirestore.instance
-          .collection('station_pumps')
-          .doc(_stationAutoId!) // Check using autoID
-          .get();
-      
-      if (!pumpsDoc.exists) {
-        // Create station_pumps document with autoID
-        await FirebaseFirestore.instance
-            .collection('station_pumps')
-            .doc(_stationAutoId!) // Use autoID as document ID
-            .set({
-              'autoID': _stationAutoId, // Store as field
-              'stationId': _stationAutoId, // Also store as stationId for compatibility
-              'pumps': [],
-              'totalPumps': 0,
-              'activePumps': 0,
-              'maintenancePumps': 0,
-              'offlinePumps': 0,
-              'createdAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+      // GET /api/stations/pumps → null when the document doesn't exist yet.
+      final doc = await AppApi.pumpsDoc(_stationAutoId!);
+      if (doc == null) {
+        await AppApi.savePumpsDoc({
+          'station_key': _stationAutoId,
+          'station_id': _stationAutoId,
+          'pumps': <dynamic>[],
+          'totalPumps': 0,
+          'activePumps': 0,
+          'maintenancePumps': 0,
+          'offlinePumps': 0,
+        });
       }
     } catch (e) {
       debugPrint('Error ensuring station pumps document: $e');
     }
+  }
+
+  /// One-shot load of the pumps array (replaces the old realtime stream).
+  Future<void> _loadPumps() async {
+    if (_stationAutoId == null) return;
+    try {
+      final doc = await AppApi.pumpsDoc(_stationAutoId!);
+      if (mounted) {
+        setState(() {
+          _pumps = doc == null
+              ? <Map<String, dynamic>>[]
+              : List<Map<String, dynamic>>.from(
+                  (doc['pumps'] as List?) ?? const []);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading pumps: $e');
+    }
+  }
+
+  /// Writes the full pumps array + counters (put = merge upsert), keeps the
+  /// station summary doc's pump count in sync, then reloads.
+  Future<void> _persistPumps(List<Map<String, dynamic>> pumps) async {
+    if (_stationAutoId == null) return;
+
+    await AppApi.savePumpsDoc({
+      'station_key': _stationAutoId,
+      'station_id': _stationAutoId,
+      'pumps': pumps,
+      'totalPumps': pumps.length,
+      'activePumps': pumps.where((p) => p['status'] == 'available').length,
+      'maintenancePumps': pumps.where((p) => p['status'] == 'maintenance').length,
+      'offlinePumps': pumps.where((p) => p['status'] == 'offline').length,
+    });
+
+    await AppApi.saveStationDoc({'id': _stationAutoId, 'pumpCount': pumps.length});
+    await _loadPumps();
   }
 
   Future<void> _savePump() async {
@@ -274,30 +269,17 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
       final price = double.tryParse(_priceController.text.trim()) ?? 0.0;
       final maxOrder = double.tryParse(_maxOrderController.text.trim()) ?? 0.0;
       final timestamp = DateTime.now();
-      
-      // Generate autoID for pump
       final pumpId = 'PUMP_${DateTime.now().millisecondsSinceEpoch}';
-      
-      // Get current pumps array from station_pumps collection using autoID
-      final doc = await FirebaseFirestore.instance
-          .collection('station_pumps')
-          .doc(_stationAutoId!) // Fetch using autoID
-          .get();
-      
-      if (!doc.exists) {
-        // Create document if it doesn't exist
-        await _ensureStationPumpsDocument();
-      }
-      
-      final data = doc.data() as Map<String, dynamic>? ?? {};
-      List<Map<String, dynamic>> pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-      
+
+      // Read-modify-write: _pumps holds the latest document state.
+      final pumps = List<Map<String, dynamic>>.from(_pumps);
+
       if (_isEditing && _editingPumpId != null) {
         // EDIT MODE: Update existing pump
-        final pumpIndex = pumps.indexWhere((pump) => pump['id'] == _editingPumpId);
-        
+        final pumpIndex =
+            pumps.indexWhere((pump) => pump['id'] == _editingPumpId);
+
         if (pumpIndex != -1) {
-          // Update the existing pump
           pumps[pumpIndex] = {
             ...pumps[pumpIndex], // Keep existing fields
             'pumpNumber': pumpNumber,
@@ -309,16 +291,9 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
             'stationId': _stationAutoId, // Include station autoID
             'autoID': _stationAutoId, // Also include autoID field
           };
-          
-          // Update station_pumps document using autoID
-          await FirebaseFirestore.instance
-              .collection('station_pumps')
-              .doc(_stationAutoId!) // Update using autoID
-              .update({
-                'pumps': pumps,
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-          
+
+          await _persistPumps(pumps);
+
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -329,10 +304,9 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
           }
         }
       } else {
-        // ADD MODE: Add new pump with autoID
-        // Create new pump object
+        // ADD MODE: Add new pump
         final newPump = {
-          'id': pumpId, // Using generated autoID
+          'id': pumpId,
           'pumpNumber': pumpNumber,
           'pumpName': pumpName.isNotEmpty ? pumpName : 'Pump $pumpNumber',
           'fuelType': _selectedFuelType,
@@ -349,30 +323,10 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
           'stationId': _stationAutoId, // Link to station autoID
           'autoID': _stationAutoId, // Also include autoID field
         };
-        
-        // Add the new pump to the array
+
         pumps.add(newPump);
-        
-        // Update station_pumps document using autoID
-        await FirebaseFirestore.instance
-            .collection('station_pumps')
-            .doc(_stationAutoId!) // Update using autoID
-            .update({
-              'pumps': pumps,
-              'updatedAt': FieldValue.serverTimestamp(),
-              'totalPumps': FieldValue.increment(1),
-              'activePumps': FieldValue.increment(1),
-            });
-        
-        // Also update the station document using autoID
-        await FirebaseFirestore.instance
-            .collection('stations')
-            .doc(_stationAutoId!) // Update using autoID
-            .update({
-              'updatedAt': FieldValue.serverTimestamp(),
-              'pumpCount': FieldValue.increment(1),
-            });
-        
+        await _persistPumps(pumps);
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -385,7 +339,6 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
 
       // Clear form and reset state
       _resetForm();
-      
     } catch (e) {
       debugPrint('Error saving pump: $e');
       if (mounted) {
@@ -407,80 +360,23 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
     if (_stationAutoId == null) return;
     
     try {
-      // Get current pumps array using station autoID
-      final doc = await FirebaseFirestore.instance
-          .collection('station_pumps')
-          .doc(_stationAutoId!) // Fetch using autoID
-          .get();
-      
-      if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>;
-        final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-        String? oldStatus;
-        
-        // Find and update the pump
-        for (int i = 0; i < pumps.length; i++) {
-          if (pumps[i]['id'] == pumpId) {
-            oldStatus = pumps[i]['status']?.toString();
-            pumps[i]['status'] = newStatus;
-            pumps[i]['updatedAt'] = DateTime.now().toIso8601String();
-            
-            // Update isActive based on status
-            pumps[i]['isActive'] = (newStatus == 'available' || newStatus == 'in-use');
-            break;
-          }
-        }
-        
-        // Update the document using station autoID
-        await FirebaseFirestore.instance
-            .collection('station_pumps')
-            .doc(_stationAutoId!) // Update using autoID
-            .update({
-              'pumps': pumps,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-        
-        // Update pump counters based on status change
-        if (oldStatus != null && oldStatus != newStatus) {
-          await _updatePumpCounters(oldStatus, newStatus);
+      // Read-modify-write on the in-memory pumps list. Counters are recomputed
+      // from the list inside _persistPumps (replaces the old increment
+      // increment logic).
+      final pumps = List<Map<String, dynamic>>.from(_pumps);
+      for (final pump in pumps) {
+        if (pump['id'] == pumpId) {
+          pump['status'] = newStatus;
+          pump['updatedAt'] = DateTime.now().toIso8601String();
+          pump['isActive'] =
+              (newStatus == 'available' || newStatus == 'in-use');
+          break;
         }
       }
+
+      await _persistPumps(pumps);
     } catch (e) {
       debugPrint('Error updating pump status: $e');
-    }
-  }
-
-  Future<void> _updatePumpCounters(String oldStatus, String newStatus) async {
-    try {
-      final updateData = <String, dynamic>{
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-      
-      // Decrement old status counter
-      if (oldStatus == 'available') {
-        updateData['activePumps'] = FieldValue.increment(-1);
-      } else if (oldStatus == 'maintenance') {
-        updateData['maintenancePumps'] = FieldValue.increment(-1);
-      } else if (oldStatus == 'offline') {
-        updateData['offlinePumps'] = FieldValue.increment(-1);
-      }
-      
-      // Increment new status counter
-      if (newStatus == 'available') {
-        updateData['activePumps'] = FieldValue.increment(1);
-      } else if (newStatus == 'maintenance') {
-        updateData['maintenancePumps'] = FieldValue.increment(1);
-      } else if (newStatus == 'offline') {
-        updateData['offlinePumps'] = FieldValue.increment(1);
-      }
-      
-      // Update station_pumps document using autoID
-      await FirebaseFirestore.instance
-          .collection('station_pumps')
-          .doc(_stationAutoId!) // Update using autoID
-          .update(updateData);
-    } catch (e) {
-      debugPrint('Error updating pump counters: $e');
     }
   }
 
@@ -507,71 +403,19 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
 
     if (confirmed == true) {
       try {
-        // Get current pumps array using station autoID
-        final doc = await FirebaseFirestore.instance
-            .collection('station_pumps')
-            .doc(_stationAutoId!) // Fetch using autoID
-            .get();
-        
-        if (doc.exists) {
-          final data = doc.data() as Map<String, dynamic>;
-          final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-          String? pumpStatus;
-          
-          // Find and remove the pump
-          final pumpIndex = pumps.indexWhere((pump) => pump['id'] == pumpId);
-          if (pumpIndex != -1) {
-            pumpStatus = pumps[pumpIndex]['status']?.toString();
-            pumps.removeAt(pumpIndex);
-          }
-          
-          // Update station_pumps document using autoID
-          await FirebaseFirestore.instance
-              .collection('station_pumps')
-              .doc(_stationAutoId!) // Update using autoID
-              .update({
-                'pumps': pumps,
-                'totalPumps': FieldValue.increment(-1),
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-          
-          // Update pump counters based on status
-          if (pumpStatus != null) {
-            final counterUpdate = <String, dynamic>{
-              'updatedAt': FieldValue.serverTimestamp(),
-            };
-            
-            if (pumpStatus == 'available') {
-              counterUpdate['activePumps'] = FieldValue.increment(-1);
-            } else if (pumpStatus == 'maintenance') {
-              counterUpdate['maintenancePumps'] = FieldValue.increment(-1);
-            } else if (pumpStatus == 'offline') {
-              counterUpdate['offlinePumps'] = FieldValue.increment(-1);
-            }
-            
-            await FirebaseFirestore.instance
-                .collection('station_pumps')
-                .doc(_stationAutoId!)
-                .update(counterUpdate);
-          }
-          
-          // Update station document using autoID
-          await FirebaseFirestore.instance
-              .collection('stations')
-              .doc(_stationAutoId!) // Update using autoID
-              .update({
-                'pumpCount': FieldValue.increment(-1),
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-          
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Pump deleted successfully'),
-                backgroundColor: Colors.green,
-              ),
-            );
-          }
+        // Read-modify-write: remove the pump and persist counters + summary.
+        final pumps = List<Map<String, dynamic>>.from(_pumps);
+        pumps.removeWhere((pump) => pump['id'] == pumpId);
+
+        await _persistPumps(pumps);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Pump deleted successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
         }
       } catch (e) {
         debugPrint('Error deleting pump: $e');
@@ -591,7 +435,8 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
     _editingPumpId = pump['id']?.toString();
     _pumpNumberController.text = pump['pumpNumber']?.toString() ?? '';
     _pumpNameController.text = pump['pumpName']?.toString() ?? '';
-    _selectedFuelType = pump['fuelType']?.toString();
+    _selectedFuelType = normalizeFuelType(pump['fuelType']?.toString()) ??
+        pump['fuelType']?.toString();
     _priceController.text = pump['pricePerLiter']?.toString() ?? '';
     _maxOrderController.text = pump['maxOrderLimit']?.toString() ?? '';
     
@@ -632,7 +477,7 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
   Widget _buildPumpCard(Map<String, dynamic> pump) {
     final pumpNumber = pump['pumpNumber']?.toString() ?? 'N/A';
     final pumpName = pump['pumpName']?.toString() ?? 'Unnamed Pump';
-    final fuelType = pump['fuelType']?.toString() ?? 'Unknown';
+    final fuelType = fuelTypeLabel(pump['fuelType']?.toString());
     final price = pump['pricePerLiter']?.toDouble() ?? 0.0;
     final maxOrder = pump['maxOrderLimit']?.toDouble() ?? 0.0;
     final fuelLevel = pump['currentFuelLevel']?.toDouble() ?? 0.0;
@@ -1142,7 +987,7 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
                         ..._availableFuelTypes.map((type) {
                           return DropdownMenuItem<String>(
                             value: type,
-                            child: Text(type),
+                            child: Text(fuelTypeLabel(type)),
                           );
                         }),
                         const DropdownMenuItem<String>(
@@ -1163,7 +1008,7 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
                       ..._commonFuelTypes.where((type) => !_availableFuelTypes.contains(type)).map((type) {
                         return DropdownMenuItem<String>(
                           value: type,
-                          child: Text(type),
+                          child: Text(fuelTypeLabel(type)),
                         );
                       }),
                     ],
@@ -1379,113 +1224,56 @@ class _StationPumpsPageState extends State<StationPumpsPage> {
 
                     // Add/Edit Pump Form or Pumps List
                     Expanded(
-                      child: _isAddingNew 
+                      child: _isAddingNew
                           ? _buildPumpForm()
-                          : StreamBuilder<DocumentSnapshot>(
-                              stream: FirebaseFirestore.instance
-                                  .collection('station_pumps')
-                                  .doc(_stationAutoId!) // Stream using autoID
-                                  .snapshots(),
-                              builder: (context, snapshot) {
-                                if (snapshot.hasError) {
-                                  return Center(child: Text('Error: ${snapshot.error}'));
-                                }
-
-                                if (snapshot.connectionState == ConnectionState.waiting) {
-                                  return const Center(child: CircularProgressIndicator());
-                                }
-
-                                if (!snapshot.hasData || !snapshot.data!.exists) {
-                                  return Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Icons.local_gas_station,
-                                          size: 80,
-                                          color: Colors.grey,
-                                        ),
-                                        const SizedBox(height: 20),
-                                        const Text(
-                                          'No Pumps Yet',
-                                          style: TextStyle(
-                                            fontSize: 20,
+                          : _isLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : _pumps.isEmpty
+                                  ? Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(
+                                            Icons.local_gas_station,
+                                            size: 80,
                                             color: Colors.grey,
-                                            fontWeight: FontWeight.w600,
                                           ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        const Text(
-                                          'Add your first pump to start serving customers',
-                                          style: TextStyle(color: Colors.grey),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                        const SizedBox(height: 24),
-                                        ElevatedButton.icon(
-                                          icon: const Icon(Icons.add, size: 20),
-                                          label: const Text('Add First Pump'),
-                                          onPressed: () {
-                                            setState(() => _isAddingNew = true);
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }
-
-                                final data = snapshot.data!.data() as Map<String, dynamic>;
-                                final pumps = List<Map<String, dynamic>>.from(data['pumps'] ?? []);
-                                
-                                if (pumps.isEmpty) {
-                                  return Center(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Icons.local_gas_station,
-                                          size: 80,
-                                          color: Colors.grey,
-                                        ),
-                                        const SizedBox(height: 20),
-                                        const Text(
-                                          'No Pumps Yet',
-                                          style: TextStyle(
-                                            fontSize: 20,
-                                            color: Colors.grey,
-                                            fontWeight: FontWeight.w600,
+                                          const SizedBox(height: 20),
+                                          const Text(
+                                            'No Pumps Yet',
+                                            style: TextStyle(
+                                              fontSize: 20,
+                                              color: Colors.grey,
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        const Text(
-                                          'Add your first pump to start serving customers',
-                                          style: TextStyle(color: Colors.grey),
-                                          textAlign: TextAlign.center,
-                                        ),
-                                        const SizedBox(height: 24),
-                                        ElevatedButton.icon(
-                                          icon: const Icon(Icons.add, size: 20),
-                                          label: const Text('Add First Pump'),
-                                          onPressed: () {
-                                            setState(() => _isAddingNew = true);
-                                          },
-                                        ),
-                                      ],
+                                          const SizedBox(height: 8),
+                                          const Text(
+                                            'Add your first pump to start serving customers',
+                                            style: TextStyle(color: Colors.grey),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 24),
+                                          ElevatedButton.icon(
+                                            icon: const Icon(Icons.add, size: 20),
+                                            label: const Text('Add First Pump'),
+                                            onPressed: () {
+                                              setState(() => _isAddingNew = true);
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      padding: const EdgeInsets.all(16),
+                                      itemCount: _pumps.length,
+                                      itemBuilder: (context, index) {
+                                        return Padding(
+                                          padding: const EdgeInsets.only(bottom: 16),
+                                          child: _buildPumpCard(_pumps[index]),
+                                        );
+                                      },
                                     ),
-                                  );
-                                }
-
-                                return ListView.builder(
-                                  padding: const EdgeInsets.all(16),
-                                  itemCount: pumps.length,
-                                  itemBuilder: (context, index) {
-                                    return Padding(
-                                      padding: const EdgeInsets.only(bottom: 16),
-                                      child: _buildPumpCard(pumps[index]),
-                                    );
-                                  },
-                                );
-                              },
-                            ),
                     ),
                   ],
                 ),

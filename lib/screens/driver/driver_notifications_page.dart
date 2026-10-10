@@ -9,7 +9,7 @@ class DriverNotificationsPage extends StatefulWidget {
 }
 
 class _DriverNotificationsPageState extends State<DriverNotificationsPage> {
-  // Sample notification data - in real app, fetch from Firebase
+  // Sample notification data - in real app, fetch from the backend
   final List<NotificationItem> _notifications = [
     NotificationItem(
       id: '1',

@@ -1,10 +1,10 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
 
 import '../../services/auth_user_service.dart';
 import '../driver/driver_dashboard.dart';
 import '../station/station_dashboard.dart';
-import '../user/user_dashboard.dart';
+import '../user/user_dashboard.dart'; // passenger / regular user screen
 import 'login_screen.dart';
 
 class AuthWrapper extends StatefulWidget {
@@ -15,80 +15,77 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  // Remove the GlobalKey that references private class
-  
+  bool _restoring = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _restore();
+  }
+
+  /// Restores the JWT session (one /api/auth/me call). Called again after
+  /// login / logout to re-evaluate the dashboard.
+  Future<void> _restore() async {
+    if (mounted) {
+      setState(() {
+        _restoring = true;
+        _error = null;
+      });
+    }
+    try {
+      await AuthService.restoreSession(force: true);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+    if (mounted) setState(() => _restoring = false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        print('=== AUTH WRAPPER ===');
-        print('Auth state: ${snapshot.data?.uid ?? "Not logged in"}');
-        print('Connection state: ${snapshot.connectionState}');
-        print('Has data: ${snapshot.hasData}');
+    if (_restoring) {
+      return const _SplashLoadingView();
+    }
 
-        // ── Loading ────────────────────────────────────────────────
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const _LoadingView(message: 'Initializing...');
-        }
+    if (_error != null) {
+      return _ErrorView(
+        error: _error!,
+        onRetry: _restore,
+        onSignOut: () async {
+          await AuthService.signOut();
+          if (mounted) _restore();
+        },
+      );
+    }
 
-        // ── Not signed in ──────────────────────────────────────────
-        if (snapshot.data == null) {
-          print('Showing LoginScreen');
-          return LoginScreen(
-            onLoginSuccess: () {
-              print('=== CALLBACK TRIGGERED ===');
-              print('Forcing rebuild of AuthWrapper');
-              // Force a complete rebuild
-              if (mounted) {
-                setState(() {});
-              }
-            },
-          );
-        }
+    final user = AuthService.currentUser;
+    if (user == null) {
+      return LoginScreen(onSignedIn: _restore);
+    }
 
-        // ── Signed in → load role ──────────────────────────────────
-        print('User is signed in, loading role...');
-        return FutureBuilder<String>(
-          future: AuthService.getUserRole(),
-          builder: (context, roleSnapshot) {
-            print('Role loading state: ${roleSnapshot.connectionState}');
-            
-            if (roleSnapshot.connectionState == ConnectionState.waiting) {
-              return const _LoadingView(message: 'Loading profile...');
-            }
+    return switch (user.role) {
+      'driver' => const DriverDashboard(),
+      'station' => const StationDashboard(),
+      _ => const UserDashboard(),
+    };
+  }
+}
 
-            if (roleSnapshot.hasError) {
-              print('Role error: ${roleSnapshot.error}');
-              return _ErrorView(
-                error: roleSnapshot.error.toString(),
-                onRetry: () {
-                  setState(() {});
-                },
-              );
-            }
+class _SplashLoadingView extends StatelessWidget {
+  const _SplashLoadingView();
 
-            final role = (roleSnapshot.data ?? 'user').toLowerCase().trim();
-            print('=== NAVIGATING TO DASHBOARD ===');
-            print('User role: $role');
-            
-            // Navigate based on role
-            Widget dashboard;
-            switch (role) {
-              case 'driver':
-                dashboard = const DriverDashboard();
-                break;
-              case 'station':
-                dashboard = const StationDashboard();
-                break;
-              default:
-                dashboard = const UserDashboard();
-            }
-            
-            return dashboard;
-          },
-        );
-      },
+  @override
+  Widget build(BuildContext context) {
+    // Only the splash animation — no text and no extra messages.
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Center(
+        child: Lottie.asset(
+          'assets/lottie/splash.json',
+          fit: BoxFit.contain,
+          repeat: true,
+        ),
+      ),
     );
   }
 }
@@ -96,75 +93,38 @@ class _AuthWrapperState extends State<AuthWrapper> {
 class _ErrorView extends StatelessWidget {
   final String error;
   final VoidCallback onRetry;
+  final VoidCallback onSignOut;
 
-  const _ErrorView({required this.error, required this.onRetry});
+  const _ErrorView({required this.error, required this.onRetry, required this.onSignOut});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
+      body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error, color: Colors.red, size: 60),
+              const Icon(Icons.error_outline_rounded, color: Colors.red, size: 90),
+              const SizedBox(height: 24),
+              const Text('Connection issue', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
-              const Text(
-                'Profile Loading Error',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                error,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.red),
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton(
+              Text(error, textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent, fontSize: 16)),
+              const SizedBox(height: 48),
+              FilledButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
                 onPressed: onRetry,
-                child: const Text('Retry'),
               ),
               const SizedBox(height: 16),
-              OutlinedButton(
-                onPressed: () async {
-                  await FirebaseAuth.instance.signOut();
-                },
-                child: const Text('Logout'),
+              TextButton.icon(
+                icon: const Icon(Icons.logout),
+                label: const Text('Sign out'),
+                onPressed: onSignOut,
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LoadingView extends StatelessWidget {
-  final String message;
-
-  const _LoadingView({this.message = 'Loading...'});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.local_gas_station_rounded,
-              size: 90,
-              color: Colors.blue,
-            ),
-            const SizedBox(height: 32),
-            const CircularProgressIndicator(),
-            const SizedBox(height: 24),
-            Text(
-              message,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-          ],
         ),
       ),
     );
